@@ -28,6 +28,10 @@ function RegisterContent() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName || !email || !password) return;
+    if (password.length < 8) {
+      setErrorMsg('Password must be at least 8 characters long.');
+      return;
+    }
     if (!acceptTerms) {
       showToast('Please accept the Terms & Privacy Policy to register.', 'error');
       return;
@@ -169,6 +173,30 @@ function RegisterContent() {
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+            {password.length > 0 && (
+              <div className="mt-1.5 space-y-1">
+                <div className="h-1 w-full bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      password.length < 8
+                        ? 'w-1/4 bg-red-500'
+                        : /[0-9]/.test(password) && /[A-Z]/.test(password)
+                        ? 'w-full bg-emerald-500'
+                        : /[0-9]/.test(password) || /[A-Z]/.test(password)
+                        ? 'w-3/4 bg-amber-500'
+                        : 'w-1/2 bg-yellow-500'
+                    }`}
+                  />
+                </div>
+                <p className="text-[10px] text-gray-500 font-medium">
+                  {password.length < 8
+                    ? 'Minimum 8 characters required'
+                    : /[0-9]/.test(password) && /[A-Z]/.test(password)
+                    ? 'Strong password'
+                    : 'Good password — add uppercase letters and numbers to strengthen'}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex items-start gap-2 pt-1">

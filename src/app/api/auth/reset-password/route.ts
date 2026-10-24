@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { inMemoryStore, connectToDatabase } from '@/lib/db';
 import { PasswordResetModel } from '@/models/PasswordReset';
 import { UserModel } from '@/models/User';
+import { passwordResetSubmitSchema } from '@/lib/validators';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,8 +69,9 @@ export async function GET(request: Request) {
       message: 'Token is valid and active',
     });
   } catch (error: any) {
+    console.error('Error validating reset token:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Failed to validate reset token' },
+      { success: false, message: 'An unexpected error occurred while validating reset token' },
       { status: 500 }
     );
   }
@@ -80,22 +82,15 @@ export async function POST(request: Request) {
     await connectToDatabase();
 
     const body = await request.json();
-    const { token, email, newPassword } = body;
-
-    if (!token || !email || !newPassword) {
+    const validation = passwordResetSubmitSchema.safeParse(body);
+    if (!validation.success) {
       return NextResponse.json(
-        { success: false, message: 'Token, email, and new password are required' },
+        { success: false, message: validation.error.errors[0]?.message || 'Invalid input data' },
         { status: 400 }
       );
     }
 
-    if (newPassword.length < 6) {
-      return NextResponse.json(
-        { success: false, message: 'Password must be at least 6 characters long' },
-        { status: 400 }
-      );
-    }
-
+    const { token, email, newPassword } = validation.data;
     const cleanEmail = email.trim().toLowerCase();
     const isDbConnected = mongoose.connection.readyState === 1;
 
@@ -136,8 +131,9 @@ export async function POST(request: Request) {
       message: 'Password reset successfully! You can now log in with your new password.',
     });
   } catch (error: any) {
+    console.error('Error resetting password:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Server error resetting password' },
+      { success: false, message: 'An unexpected error occurred while resetting password' },
       { status: 500 }
     );
   }

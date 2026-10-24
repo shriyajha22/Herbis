@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { inMemoryStore, connectToDatabase } from '@/lib/db';
 import { verifyAdminToken } from '@/lib/auth';
+import { productSchema } from '@/lib/validators';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,10 +73,20 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
+    const validation = productSchema.safeParse(body);
+    if (!validation.success) {
+      return NextResponse.json(
+        { success: false, message: validation.error.errors[0]?.message || 'Invalid product data' },
+        { status: 400 }
+      );
+    }
+
+    const validData = validation.data;
     const newProduct = {
       _id: `prod-${Date.now()}`,
       ...body,
-      inStock: body.stock > 0,
+      ...validData,
+      inStock: validData.stock > 0,
       rating: body.rating || 5.0,
       reviewCount: body.reviewCount || 0,
     };
@@ -87,7 +98,8 @@ export async function POST(request: Request) {
       message: 'Product created successfully',
       product: newProduct,
     });
-  } catch (error) {
-    return NextResponse.json({ success: false, message: 'Failed to create product' }, { status: 500 });
+  } catch (error: any) {
+    console.error('Error creating product:', error);
+    return NextResponse.json({ success: false, message: 'An unexpected error occurred while creating product' }, { status: 500 });
   }
 }

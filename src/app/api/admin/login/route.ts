@@ -4,6 +4,8 @@ import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import { inMemoryStore, connectToDatabase } from '@/lib/db';
 import { UserModel } from '@/models/User';
+import { loginSchema } from '@/lib/validators';
+import { checkAuthRateLimit, getClientIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,19 +82,28 @@ async function ensureAdminInDatabase(cleanEmail: string) {
 }
 
 export async function POST(request: Request) {
+  const ip = getClientIp(request);
+  const rateLimit = await checkAuthRateLimit(ip);
+  if (!rateLimit.success) {
+    return NextResponse.json(
+      { success: false, message: rateLimit.message },
+      { status: 429 }
+    );
+  }
+
   try {
     await connectToDatabase();
 
     const body = await request.json();
-    const { email, password } = body;
-
-    if (!email || !password) {
+    const validation = loginSchema.safeParse(body);
+    if (!validation.success) {
       return NextResponse.json(
-        { success: false, message: 'Email and password are required' },
+        { success: false, message: validation.error.errors[0]?.message || 'Invalid email or password' },
         { status: 400 }
       );
     }
 
+    const { email, password } = validation.data;
     const cleanEmail = email.trim().toLowerCase();
     const isDbConnected = mongoose.connection.readyState === 1;
 

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { inMemoryStore } from '@/lib/db';
 import { verifyAdminToken } from '@/lib/auth';
+import { contactSchema } from '@/lib/validators';
+import { checkContactRateLimit, getClientIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,32 +18,43 @@ export async function GET(request: Request) {
       queries: inMemoryStore.contactQueries,
     });
   } catch (error: any) {
+    console.error('Error fetching contact queries:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Failed to fetch contact queries' },
+      { success: false, message: 'An unexpected error occurred while fetching contact queries' },
       { status: 500 }
     );
   }
 }
 
 export async function POST(request: Request) {
+  const ip = getClientIp(request);
+  const rateLimit = await checkContactRateLimit(ip);
+  if (!rateLimit.success) {
+    return NextResponse.json(
+      { success: false, message: rateLimit.message },
+      { status: 429 }
+    );
+  }
+
   try {
     const body = await request.json();
-    const { name, email, phone, subject, message } = body;
-
-    if (!name || !email || !message) {
+    const validation = contactSchema.safeParse(body);
+    if (!validation.success) {
       return NextResponse.json(
-        { success: false, message: 'Name, email, and message are required.' },
+        { success: false, message: validation.error.errors[0]?.message || 'Invalid contact form data' },
         { status: 400 }
       );
     }
 
+    const { name, email, phone, subject, message } = validation.data;
+
     const newQuery = {
       id: `q-${Date.now()}`,
-      name: String(name).trim(),
-      email: String(email).trim().toLowerCase(),
-      phone: phone ? String(phone).trim() : '',
-      subject: subject ? String(subject).trim() : 'General Customer Query',
-      message: String(message).trim(),
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone ? phone.trim() : '',
+      subject: subject ? subject.trim() : 'General Customer Query',
+      message: message.trim(),
       createdAt: new Date().toISOString(),
       status: 'Unread' as const,
     };
@@ -54,8 +67,9 @@ export async function POST(request: Request) {
       query: newQuery,
     });
   } catch (error: any) {
+    console.error('Error handling contact submission:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Failed to send message' },
+      { success: false, message: 'An unexpected error occurred while sending your message' },
       { status: 500 }
     );
   }
@@ -81,8 +95,9 @@ export async function PATCH(request: Request) {
       queries: inMemoryStore.contactQueries,
     });
   } catch (error: any) {
+    console.error('Error updating contact query status:', error);
     return NextResponse.json(
-      { success: false, message: 'Failed to update query status' },
+      { success: false, message: 'An unexpected error occurred while updating query status' },
       { status: 500 }
     );
   }
@@ -107,8 +122,9 @@ export async function DELETE(request: Request) {
       queries: inMemoryStore.contactQueries,
     });
   } catch (error: any) {
+    console.error('Error deleting contact query:', error);
     return NextResponse.json(
-      { success: false, message: 'Failed to delete query' },
+      { success: false, message: 'An unexpected error occurred while deleting query' },
       { status: 500 }
     );
   }

@@ -3,6 +3,7 @@ import { inMemoryStore, connectToDatabase } from '@/lib/db';
 import { UserModel } from '@/models/User';
 import { Address } from '@/lib/types';
 import { verifyCustomerToken } from '@/lib/auth';
+import { addressSchema } from '@/lib/validators';
 
 export const dynamic = 'force-dynamic';
 
@@ -106,16 +107,24 @@ export async function POST(request: Request) {
     if (action === 'sync' && Array.isArray(newAddressesArray)) {
       currentAddresses = newAddressesArray;
     } else if (action === 'add' && address) {
+      const parsed = addressSchema.safeParse(address);
+      if (!parsed.success) {
+        return NextResponse.json(
+          { success: false, message: parsed.error.errors[0]?.message || 'Invalid address data' },
+          { status: 400 }
+        );
+      }
+      const validAddr = parsed.data;
       const isFirst = currentAddresses.length === 0;
       const newAddress: Address = {
-        fullName: address.fullName?.trim() || '',
-        phone: address.phone?.trim() || '',
-        email: address.email?.trim() || cleanEmail,
-        street: address.street?.trim() || '',
-        city: address.city?.trim() || '',
-        state: address.state?.trim() || '',
-        pincode: address.pincode?.trim() || '',
-        isDefault: isFirst || Boolean(address.isDefault),
+        fullName: validAddr.fullName,
+        phone: validAddr.phone,
+        email: validAddr.email || cleanEmail,
+        street: validAddr.street,
+        city: validAddr.city,
+        state: validAddr.state,
+        pincode: validAddr.pincode,
+        isDefault: isFirst || Boolean(validAddr.isDefault),
       };
 
       if (newAddress.isDefault) {
@@ -123,15 +132,23 @@ export async function POST(request: Request) {
       }
       currentAddresses.unshift(newAddress);
     } else if (action === 'edit' && address && typeof index === 'number' && index >= 0 && index < currentAddresses.length) {
+      const parsed = addressSchema.safeParse(address);
+      if (!parsed.success) {
+        return NextResponse.json(
+          { success: false, message: parsed.error.errors[0]?.message || 'Invalid address data' },
+          { status: 400 }
+        );
+      }
+      const validAddr = parsed.data;
       const updatedAddress: Address = {
-        fullName: address.fullName?.trim() || currentAddresses[index].fullName,
-        phone: address.phone?.trim() || currentAddresses[index].phone,
-        email: address.email?.trim() || currentAddresses[index].email,
-        street: address.street?.trim() || currentAddresses[index].street,
-        city: address.city?.trim() || currentAddresses[index].city,
-        state: address.state?.trim() || currentAddresses[index].state,
-        pincode: address.pincode?.trim() || currentAddresses[index].pincode,
-        isDefault: Boolean(address.isDefault),
+        fullName: validAddr.fullName,
+        phone: validAddr.phone,
+        email: validAddr.email || currentAddresses[index].email,
+        street: validAddr.street,
+        city: validAddr.city,
+        state: validAddr.state,
+        pincode: validAddr.pincode,
+        isDefault: Boolean(validAddr.isDefault),
       };
 
       if (updatedAddress.isDefault) {
@@ -175,7 +192,7 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('Error updating user addresses:', error);
     return NextResponse.json(
-      { success: false, message: error?.message || 'Server error updating addresses' },
+      { success: false, message: 'An unexpected error occurred while updating addresses' },
       { status: 500 }
     );
   }

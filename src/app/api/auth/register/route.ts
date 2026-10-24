@@ -4,6 +4,8 @@ import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import { inMemoryStore, connectToDatabase } from '@/lib/db';
 import { UserModel } from '@/models/User';
+import { registerSchema } from '@/lib/validators';
+import { checkRegisterRateLimit, getClientIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,33 +13,28 @@ const JWT_SECRET = process.env.JWT_SECRET!;
 if (!JWT_SECRET) throw new Error('JWT_SECRET is not configured');
 
 export async function POST(request: Request) {
+  const ip = getClientIp(request);
+  const rateLimit = await checkRegisterRateLimit(ip);
+  if (!rateLimit.success) {
+    return NextResponse.json(
+      { success: false, message: rateLimit.message },
+      { status: 429 }
+    );
+  }
+
   try {
     await connectToDatabase();
 
     const body = await request.json();
-    const { name, email, phone, password } = body;
-
-    if (!name || !email || !password) {
+    const validation = registerSchema.safeParse(body);
+    if (!validation.success) {
       return NextResponse.json(
-        { success: false, message: 'Name, email, and password are required' },
+        { success: false, message: validation.error.errors[0]?.message || 'Invalid input data' },
         { status: 400 }
       );
     }
 
-    if (!email.includes('@')) {
-      return NextResponse.json(
-        { success: false, message: 'Please enter a valid email address' },
-        { status: 400 }
-      );
-    }
-
-    if (password.length < 6) {
-      return NextResponse.json(
-        { success: false, message: 'Password must be at least 6 characters long' },
-        { status: 400 }
-      );
-    }
-
+    const { name, email, phone, password } = validation.data;
     const cleanEmail = email.trim().toLowerCase();
 
     // Check if account already exists
@@ -119,7 +116,7 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('Error handling customer registration:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Server error processing registration' },
+      { success: false, message: 'An unexpected error occurred during registration' },
       { status: 500 }
     );
   }

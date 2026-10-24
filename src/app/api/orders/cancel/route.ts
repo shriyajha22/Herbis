@@ -172,8 +172,9 @@ export async function POST(request: Request) {
       order: normalizeOrder(updatedOrder),
     });
   } catch (error: any) {
+    console.error('Error processing order cancellation:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Server error processing order cancellation.' },
+      { success: false, message: 'An unexpected error occurred while processing order cancellation.' },
       { status: 500 }
     );
   }

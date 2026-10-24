@@ -5,24 +5,43 @@ import { inMemoryStore, connectToDatabase } from '@/lib/db';
 import { UserModel } from '@/models/User';
 import { PasswordResetModel } from '@/models/PasswordReset';
 import { sendPasswordResetEmail } from '@/lib/mailer';
+import { passwordResetRequestSchema } from '@/lib/validators';
+import { checkForgotPasswordRateLimit, getClientIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
+  const ip = getClientIp(request);
+  const ipLimit = await checkForgotPasswordRateLimit(ip);
+  if (!ipLimit.success) {
+    return NextResponse.json(
+      { success: false, message: ipLimit.message },
+      { status: 429 }
+    );
+  }
+
   try {
     await connectToDatabase();
 
     const body = await request.json();
-    const { email } = body;
-
-    if (!email || !email.includes('@')) {
+    const validation = passwordResetRequestSchema.safeParse(body);
+    if (!validation.success) {
       return NextResponse.json(
-        { success: false, message: 'Please provide a valid email address.' },
+        { success: false, message: validation.error.errors[0]?.message || 'Please provide a valid email address.' },
         { status: 400 }
       );
     }
 
+    const { email } = validation.data;
     const cleanEmail = email.trim().toLowerCase();
+
+    const emailLimit = await checkForgotPasswordRateLimit(cleanEmail);
+    if (!emailLimit.success) {
+      return NextResponse.json(
+        { success: false, message: emailLimit.message },
+        { status: 429 }
+      );
+    }
     const isDbConnected = mongoose.connection.readyState === 1;
 
     // Verify user exists in database

@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import mongoose from 'mongoose';
-import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { inMemoryStore, connectToDatabase } from '@/lib/db';
 import { OrderModel } from '@/models/Order';
 import { Order } from '@/lib/types';
 import { verifyAdminToken, verifyCustomerToken } from '@/lib/auth';
 import { getOrderItemImage } from '@/lib/seedData';
+import { orderCreateSchema } from '@/lib/validators';
 
 import { NotificationModel } from '@/models/Notification';
 
@@ -54,7 +55,43 @@ export async function GET(request: Request) {
       if (!order) {
         return NextResponse.json({ success: false, message: 'Order not found' }, { status: 404 });
       }
-      return NextResponse.json({ success: true, order: normalizeOrder(order) });
+
+      // Check if current user is owner or admin
+      const customerAuth = verifyCustomerToken(request);
+      const isOwnerOrAdmin =
+        customerAuth.isAuthorized &&
+        customerAuth.user &&
+        (customerAuth.user.role === 'admin' ||
+          customerAuth.user.userId === order.userId ||
+          customerAuth.user.email.toLowerCase() === order.shippingAddress?.email?.toLowerCase());
+
+      if (isOwnerOrAdmin) {
+        return NextResponse.json({ success: true, order: normalizeOrder(order) });
+      }
+
+      // Public tracking response - mask sensitive personal data
+      const publicOrder = {
+        orderNumber: order.orderNumber,
+        orderStatus: order.orderStatus || order.status || 'Processing',
+        status: order.status || order.orderStatus || 'Processing',
+        createdAt: order.createdAt,
+        estimatedDelivery: order.estimatedDelivery || '3-5 Business Days',
+        trackingNumber: order.trackingNumber || null,
+        courierName: order.courierName || 'Shiprocket Express',
+        items: (order.items || []).map((it: any) => ({
+          productName: it.productName || it.name,
+          quantity: it.quantity,
+          weight: it.weight,
+          image: getOrderItemImage(it),
+        })),
+        shippingAddress: {
+          city: order.shippingAddress?.city || '',
+          state: order.shippingAddress?.state || '',
+          pincode: order.shippingAddress?.pincode ? `***${order.shippingAddress.pincode.slice(-3)}` : '',
+        },
+      };
+
+      return NextResponse.json({ success: true, order: publicOrder });
     }
 
     // 2. Customer Order History (Protected with JWT verification & customer cross-account isolation)
@@ -111,8 +148,9 @@ export async function GET(request: Request) {
       orders: normalizeOrders(allOrders),
     });
   } catch (error: any) {
+    console.error('Error in GET /api/orders:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Database query error' },
+      { success: false, message: 'An unexpected error occurred while fetching orders' },
       { status: 500 }
     );
   }
@@ -123,14 +161,17 @@ export async function POST(request: Request) {
     await connectToDatabase();
     const body = await request.json();
 
-    if (!body.items || body.items.length === 0 || !body.shippingAddress) {
+    const validation = orderCreateSchema.safeParse(body);
+    if (!validation.success) {
       return NextResponse.json(
-        { success: false, message: 'Invalid order data. Items and shipping address are required.' },
+        { success: false, message: validation.error.errors[0]?.message || 'Invalid order data' },
         { status: 400 }
       );
     }
 
-    if (body.paymentMethod && body.paymentMethod !== 'Cash on Delivery') {
+    const validData = validation.data;
+
+    if (validData.paymentMethod && validData.paymentMethod !== 'Cash on Delivery') {
       return NextResponse.json(
         { success: false, message: 'PrimeBrew Herbis accepts Cash on Delivery (COD) only. Online payment options are disabled.' },
         { status: 400 }
@@ -140,25 +181,25 @@ export async function POST(request: Request) {
     // Optional Customer Authentication check (supports guest & logged in users)
     const auth = verifyCustomerToken(request);
     const userId = auth.isAuthorized && auth.user ? auth.user.userId : `guest-${Date.now()}`;
-    const customerEmail = (auth.isAuthorized && auth.user ? auth.user.email : body.shippingAddress?.email || '').trim().toLowerCase();
-    const customerName = (body.shippingAddress?.fullName || (auth.isAuthorized && auth.user ? auth.user.name : '') || 'Customer').trim();
+    const customerEmail = (auth.isAuthorized && auth.user ? auth.user.email : validData.shippingAddress.email || '').trim().toLowerCase();
+    const customerName = (validData.shippingAddress.fullName || (auth.isAuthorized && auth.user ? auth.user.name : '') || 'Customer').trim();
 
-    const formattedItems = body.items.map((item: any) => {
+    const formattedItems = validData.items.map((item: any) => {
       const itemImg = getOrderItemImage(item);
       return {
-        productId: String(item.productId || item._id || 'prod-unknown'),
+        productId: String(item.productId || item.id || 'prod-unknown'),
         productName: String(item.productName || item.name || 'Herbal Tea'),
         productImage: itemImg,
         image: itemImg,
-        price: Number(item.price || item.unitPrice) || 0,
-        weight: String(item.weight || item.selectedWeight || '30 Tea Bags'),
+        price: Number(item.price) || 0,
+        weight: String(item.weight || '30 Tea Bags'),
         quantity: Number(item.quantity) || 1,
       };
     });
 
     const uniqueId = Date.now();
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-    const orderNumber = `PBH-2026-${randomSuffix}`;
+    // Cryptographically secure order number generation
+    const orderNumber = `PBH-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     const trackingNumber = `SR-${Math.floor(100000000 + Math.random() * 900000000)}`;
 
     const orderDocData = {
@@ -168,13 +209,13 @@ export async function POST(request: Request) {
       items: formattedItems,
       shippingAddress: {
         fullName: customerName,
-        phone: String(body.shippingAddress.phone || '').trim(),
+        phone: String(validData.shippingAddress.phone || '').trim(),
         email: customerEmail,
-        street: String(body.shippingAddress.street || '').trim(),
-        city: String(body.shippingAddress.city || '').trim(),
-        state: String(body.shippingAddress.state || '').trim(),
-        pincode: String(body.shippingAddress.pincode || '').trim(),
-        isDefault: Boolean(body.shippingAddress.isDefault),
+        street: String(validData.shippingAddress.street || '').trim(),
+        city: String(validData.shippingAddress.city || '').trim(),
+        state: String(validData.shippingAddress.state || '').trim(),
+        pincode: String(validData.shippingAddress.pincode || '').trim(),
+        isDefault: Boolean(validData.shippingAddress.isDefault),
       },
       gstInvoice: body.gstInvoice ? {
         gstin: String(body.gstInvoice.gstin || ''),
@@ -253,8 +294,9 @@ export async function POST(request: Request) {
       order: normalizeOrder(createdOrder),
     });
   } catch (error: any) {
+    console.error('Error creating order:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Failed to create order' },
+      { success: false, message: 'An unexpected error occurred while placing your order' },
       { status: 500 }
     );
   }
