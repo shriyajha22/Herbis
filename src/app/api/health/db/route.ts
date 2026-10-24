@@ -1,74 +1,62 @@
 import { NextResponse } from 'next/server';
-import mongoose from 'mongoose';
-import { UserModel } from '@/models/User';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const diagnostics = {
-    ENV_PRESENT: false,
+    ENV_PRESENT: Boolean(process.env.DATABASE_URL),
     URI_VALID: false,
     NETWORK_OK: false,
-    AUTH_OK: false,
     DATABASE_ACCESS_OK: false,
-    USERS_COLLECTION_OK: false,
+    TABLES_OK: false,
+    DATABASE_ENGINE: 'PostgreSQL',
     SAFE_ERROR_CATEGORY: 'None',
   };
 
-  const rawUri = process.env.MONGODB_URI;
+  const rawUri = process.env.DATABASE_URL;
 
-  if (!rawUri || rawUri.includes("username:password")) {
-    diagnostics.SAFE_ERROR_CATEGORY = 'ENV_MISSING_OR_UNCONFIGURED';
-    return NextResponse.json({ success: false, diagnostics });
+  if (!rawUri) {
+    diagnostics.SAFE_ERROR_CATEGORY = 'DATABASE_URL_MISSING';
+    return NextResponse.json({ success: false, diagnostics }, { status: 500 });
   }
 
-  diagnostics.ENV_PRESENT = true;
-
-  if (rawUri.startsWith('mongodb+srv://') || rawUri.startsWith('mongodb://')) {
+  if (rawUri.startsWith('postgresql://') || rawUri.startsWith('postgres://')) {
     diagnostics.URI_VALID = true;
   } else {
     diagnostics.SAFE_ERROR_CATEGORY = 'INVALID_URI_SCHEME';
-    return NextResponse.json({ success: false, diagnostics });
+    return NextResponse.json({ success: false, diagnostics }, { status: 500 });
   }
 
   try {
-    const conn = await mongoose.connect(rawUri, {
-      dbName: 'primebrew',
-      bufferCommands: false,
-      serverSelectionTimeoutMS: 5000,
-    });
-
+    await prisma.$queryRaw`SELECT 1`;
     diagnostics.NETWORK_OK = true;
-    diagnostics.AUTH_OK = true;
+    diagnostics.DATABASE_ACCESS_OK = true;
 
-    if (conn.connection.db) {
-      diagnostics.DATABASE_ACCESS_OK = true;
-      const count = await UserModel.countDocuments();
-      diagnostics.USERS_COLLECTION_OK = true;
-      
-      return NextResponse.json({
-        success: true,
-        message: 'MongoDB Production Connection Healthy',
-        diagnostics,
-        userCount: count,
-      });
-    }
-  } catch (err: any) {
-    const msg = String(err.message || err.name || '');
-    let category = `CONNECTION_EXCEPTION_${err.name || 'UNKNOWN'}`;
+    const [userCount, productCount, orderCount] = await Promise.all([
+      prisma.user.count(),
+      prisma.product.count(),
+      prisma.order.count(),
+    ]);
 
-    if (err.name === 'MongoServerSelectionError' || msg.toLowerCase().includes('selection timed out') || msg.toLowerCase().includes('etimedout')) {
-      category = 'NETWORK_OR_IP_WHITELIST_BLOCKED';
-    } else if (msg.toLowerCase().includes('authentication failed') || err.code === 18 || msg.toLowerCase().includes('bad auth')) {
-      diagnostics.NETWORK_OK = true;
-      category = 'AUTHENTICATION_FAILED_CREDENTIALS_INVALID';
-    } else if (err.name === 'MongoParseError' || msg.toLowerCase().includes('scheme')) {
-      category = 'MALFORMED_URI_OR_UNENCODED_CHARACTERS';
-    }
+    diagnostics.TABLES_OK = true;
 
-    diagnostics.SAFE_ERROR_CATEGORY = category;
-    (diagnostics as any).SAFE_ERROR_DETAILS = msg.replace(/\/\/[^:]+:[^@]+@/, '//***:***@');
+    return NextResponse.json({
+      success: true,
+      message: 'PostgreSQL database connected and operational via Prisma ORM',
+      counts: {
+        users: userCount,
+        products: productCount,
+        orders: orderCount,
+      },
+      diagnostics,
+    });
+  } catch (error: any) {
+    console.error('Database health check failed:', error);
+    diagnostics.SAFE_ERROR_CATEGORY = 'QUERY_FAILED';
+    return NextResponse.json(
+      { success: false, message: 'Database health check failed', diagnostics },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json({ success: false, diagnostics });
 }

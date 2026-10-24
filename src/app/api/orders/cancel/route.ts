@@ -1,77 +1,45 @@
 import { NextResponse } from 'next/server';
-import mongoose from 'mongoose';
-import { connectToDatabase, inMemoryStore } from '@/lib/db';
-import { OrderModel } from '@/models/Order';
-import { NotificationModel } from '@/models/Notification';
+import { OrderStatus } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { verifyCustomerToken } from '@/lib/auth';
-import { getOrderItemImage } from '@/lib/seedData';
 
 export const dynamic = 'force-dynamic';
 
-const normalizeOrder = (order: any) => {
-  if (!order) return order;
-  const items = (order.items || []).map((it: any) => {
-    const resolvedImg = getOrderItemImage(it);
-    return {
-      ...it,
-      productImage: resolvedImg,
-      image: resolvedImg,
-    };
-  });
-  return {
-    ...order,
-    items,
-  };
-};
-
 export async function POST(request: Request) {
   try {
-    // 1. Mandatory Customer Authentication
     const auth = verifyCustomerToken(request);
     if (!auth.isAuthorized || !auth.user) {
       return auth.errorResponse!;
     }
 
-    await connectToDatabase();
     const body = await request.json();
     const { orderId, orderNumber } = body;
 
-    const targetIdentifier = orderId || orderNumber;
-    if (!targetIdentifier) {
+    const target = orderId || orderNumber;
+    if (!target) {
       return NextResponse.json(
         { success: false, message: 'Order ID or Order Number is required for cancellation.' },
         { status: 400 }
       );
     }
 
-    // 2. Find Order in MongoDB or Memory Store
-    let order: any = null;
-    try {
-      order = await OrderModel.findOne({
-        $or: [
-          { _id: mongoose.Types.ObjectId.isValid(targetIdentifier) ? targetIdentifier : null },
-          { orderNumber: new RegExp(`^${String(targetIdentifier).trim()}$`, 'i') },
+    const order = await prisma.order.findFirst({
+      where: {
+        OR: [
+          { id: String(target) },
+          { orderNumber: { equals: String(target).trim(), mode: 'insensitive' } },
         ],
-      }).lean();
-    } catch (err) {}
+      },
+      include: { items: true },
+    });
 
     if (!order) {
-      order = inMemoryStore.orders.find(
-        (o) => o._id === targetIdentifier || o.orderNumber.toLowerCase() === String(targetIdentifier).trim().toLowerCase()
-      );
+      return NextResponse.json({ success: false, message: 'Order not found.' }, { status: 404 });
     }
 
-    if (!order) {
-      return NextResponse.json(
-        { success: false, message: 'Order not found.' },
-        { status: 404 }
-      );
-    }
-
-    // 3. Security Check: Customer can ONLY cancel their own order
     const isOwner =
       (order.userId && order.userId === auth.user.userId) ||
-      (order.shippingAddress?.email?.toLowerCase() === auth.user.email.toLowerCase());
+      ((order.shippingAddress as any)?.email?.toLowerCase() === auth.user.email.toLowerCase());
     const isAdmin = auth.user.role === 'admin';
 
     if (!isOwner && !isAdmin) {
@@ -81,100 +49,79 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Status Check: Cancellation is ONLY allowed for Pending / Processing / Confirmed
-    const currentStatus = order.orderStatus || 'Processing';
-    const currentStatusLower = String(currentStatus).trim().toLowerCase();
-    const cancellableStatuses = ['pending', 'processing', 'confirmed'];
+    if (order.status === OrderStatus.CANCELLED) {
+      return NextResponse.json(
+        { success: false, message: `Order #${order.orderNumber} is already cancelled.` },
+        { status: 400 }
+      );
+    }
 
-    if (currentStatusLower === 'cancelled') {
+    const cancellable: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.PROCESSING, OrderStatus.CONFIRMED];
+    if (!cancellable.includes(order.status) && !isAdmin) {
       return NextResponse.json(
         {
           success: false,
-          message: `Order #${order.orderNumber} is already cancelled.`,
+          message: `Order #${order.orderNumber} cannot be cancelled as it is already ${order.status.toLowerCase()}. Please contact support.`,
         },
         { status: 400 }
       );
     }
 
-    if (!cancellableStatuses.includes(currentStatusLower)) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: `Order cannot be cancelled because it is currently "${currentStatus}". Only orders in Pending, Processing, or Confirmed state can be cancelled.`,
+    // Atomic transaction: restore stock and mark order cancelled
+    const updated = await prisma.$transaction(async (tx) => {
+      // 1. Restore stock
+      for (const item of order.items) {
+        if (item.productId) {
+          const product = await tx.product.findUnique({ where: { id: item.productId } });
+          if (product) {
+            await tx.product.update({
+              where: { id: product.id },
+              data: {
+                stock: product.stock + item.quantity,
+                inStock: true,
+              },
+            });
+          }
+        }
+      }
+
+      // 2. Mark order cancelled
+      const cancelledOrder = await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.CANCELLED,
+          cancelledAt: new Date(),
+          cancelledBy: auth.user!.email,
         },
-        { status: 400 }
-      );
-    }
-
-    // 5. Perform Cancellation Persistence
-    const cancellationTimestamp = new Date().toISOString();
-    const initiator = auth.user.role === 'admin' ? 'Admin' : 'Customer';
-
-    const updatePayload = {
-      orderStatus: 'Cancelled' as const,
-      cancelledAt: cancellationTimestamp,
-      cancelledBy: initiator,
-      previousStatus: currentStatus,
-    };
-
-    let updatedOrder: any = null;
-    try {
-      const doc = await OrderModel.findOneAndUpdate(
-        { $or: [{ _id: order._id }, { orderNumber: order.orderNumber }] },
-        { $set: updatePayload },
-        { new: true }
-      ).lean();
-      if (doc) {
-        updatedOrder = doc;
-      }
-    } catch (dbErr) {
-      console.warn('MongoDB cancellation update warning:', dbErr);
-    }
-
-    // Also update inMemoryStore cache
-    const memIdx = inMemoryStore.orders.findIndex(
-      (o) => o._id === order._id || o.orderNumber === order.orderNumber
-    );
-    if (memIdx !== -1) {
-      inMemoryStore.orders[memIdx] = {
-        ...inMemoryStore.orders[memIdx],
-        ...updatePayload,
-      };
-      if (!updatedOrder) {
-        updatedOrder = inMemoryStore.orders[memIdx];
-      }
-    }
-
-    if (!updatedOrder) {
-      updatedOrder = { ...order, ...updatePayload };
-    }
-
-    // Save Admin Notification for cancellation in MongoDB Atlas
-    try {
-      const customerName = order.shippingAddress?.fullName || order.customerName || auth.user.name || 'Customer';
-      const notifMsg = `Order #${order.orderNumber} has been cancelled by ${customerName}. Total: ₹${order.total}`;
-      await NotificationModel.create({
-        type: 'order_cancelled',
-        orderId: order._id ? order._id.toString() : targetIdentifier,
-        orderNumber: order.orderNumber,
-        customerName,
-        total: order.total || 0,
-        message: notifMsg,
-        read: false,
+        include: { items: true },
       });
-    } catch (notifErr) {
-      console.warn('Cancellation notification fallback:', notifErr);
-    }
+
+      // 3. Admin notification
+      await tx.notification.create({
+        data: {
+          title: `Order Cancelled: ${order.orderNumber}`,
+          message: `Order #${order.orderNumber} was cancelled by ${auth.user!.email}. Stock restored.`,
+          type: 'alert',
+          link: `/admin/orders?search=${order.orderNumber}`,
+        },
+      });
+
+      return cancelledOrder;
+    });
 
     return NextResponse.json({
       success: true,
-      message: `Order #${order.orderNumber} has been cancelled successfully.`,
-      order: normalizeOrder(updatedOrder),
+      message: `Order #${order.orderNumber} was successfully cancelled.`,
+      order: {
+        ...updated,
+        _id: updated.id,
+        orderStatus: updated.status,
+      },
     });
-  } catch (error: any) {
-    console.error('Error processing order cancellation:', error);
+  } catch (error) {
+    console.error('Cancel order error:', error);
     return NextResponse.json(
-      { success: false, message: 'An unexpected error occurred while processing order cancellation.' },
+      { success: false, message: 'Failed to cancel order. Please try again.' },
       { status: 500 }
     );
   }

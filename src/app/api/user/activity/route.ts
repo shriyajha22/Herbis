@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
-  await connectToDatabase();
   try {
     const body = await request.json();
     const { email, name, currentPage, action } = body;
@@ -16,19 +15,46 @@ export async function POST(request: Request) {
       );
     }
 
+    const cleanEmail = email.trim().toLowerCase();
+
     if (action === 'logout') {
-      inMemoryStore.setUserOffline(email);
+      await prisma.activeSession.updateMany({
+        where: { email: cleanEmail },
+        data: { isOnline: false },
+      });
       return NextResponse.json({ success: true, message: 'User set offline' });
     }
 
-    inMemoryStore.recordUserActivity(name, email, currentPage || '/');
+    await prisma.activeSession.upsert({
+      where: { email: cleanEmail },
+      update: {
+        name: name || cleanEmail.split('@')[0],
+        currentPage: currentPage || '/',
+        lastActive: new Date(),
+        isOnline: true,
+      },
+      create: {
+        email: cleanEmail,
+        name: name || cleanEmail.split('@')[0],
+        currentPage: currentPage || '/',
+        isOnline: true,
+      },
+    });
+
+    const activeCount = await prisma.activeSession.count({
+      where: {
+        isOnline: true,
+        lastActive: { gte: new Date(Date.now() - 60000) },
+      },
+    });
 
     return NextResponse.json({
       success: true,
       message: 'Activity recorded',
-      sessionCount: inMemoryStore.getActiveSessions().filter((s) => s.isOnline).length,
+      sessionCount: activeCount,
     });
   } catch (error) {
+    console.error('Error recording user activity:', error);
     return NextResponse.json(
       { success: false, message: 'Failed to record user activity' },
       { status: 500 }

@@ -1,68 +1,83 @@
 import { NextResponse } from 'next/server';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
+import { prisma } from '@/lib/prisma';
+import { toProductDto } from '@/lib/products';
 import { verifyAdminToken } from '@/lib/auth';
 import { productSchema } from '@/lib/validators';
+import { logAdminAction } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
-  await connectToDatabase();
-  const { searchParams } = new URL(request.url);
+  try {
+    const { searchParams } = new URL(request.url);
 
-  const query = searchParams.get('q')?.toLowerCase() || '';
-  const category = searchParams.get('category') || '';
-  const caffeine = searchParams.get('caffeine') || '';
-  const benefit = searchParams.get('benefit') || '';
-  const minPrice = Number(searchParams.get('minPrice')) || 0;
-  const maxPrice = Number(searchParams.get('maxPrice')) || 10000;
-  const sort = searchParams.get('sort') || 'featured';
+    const query = searchParams.get('q')?.trim() || '';
+    const category = searchParams.get('category')?.trim() || '';
+    const caffeine = searchParams.get('caffeine')?.trim() || '';
+    const benefit = searchParams.get('benefit')?.trim() || '';
+    const minPrice = searchParams.get('minPrice') ? Number(searchParams.get('minPrice')) : undefined;
+    const maxPrice = searchParams.get('maxPrice') ? Number(searchParams.get('maxPrice')) : undefined;
+    const sort = searchParams.get('sort') || 'featured';
 
-  let filtered = [...inMemoryStore.products];
+    const where: any = {};
 
-  if (query) {
-    filtered = filtered.filter(
-      (p) =>
-        p.name.toLowerCase().includes(query) ||
-        p.subtitle.toLowerCase().includes(query) ||
-        p.description.toLowerCase().includes(query) ||
-        p.categoryName.toLowerCase().includes(query) ||
-        p.ingredients.some((i) => i.name.toLowerCase().includes(query))
+    if (category) {
+      where.category = { equals: category, mode: 'insensitive' };
+    }
+
+    if (caffeine) {
+      where.caffeineLevel = { contains: caffeine, mode: 'insensitive' };
+    }
+
+    if (benefit) {
+      where.benefits = { has: benefit };
+    }
+
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      where.price = {};
+      if (minPrice !== undefined) where.price.gte = minPrice;
+      if (maxPrice !== undefined) where.price.lte = maxPrice;
+    }
+
+    if (query) {
+      where.OR = [
+        { name: { contains: query, mode: 'insensitive' } },
+        { subtitle: { contains: query, mode: 'insensitive' } },
+        { description: { contains: query, mode: 'insensitive' } },
+        { categoryName: { contains: query, mode: 'insensitive' } },
+      ];
+    }
+
+    let orderBy: any = { createdAt: 'desc' };
+    if (sort === 'price-low') {
+      orderBy = { price: 'asc' };
+    } else if (sort === 'price-high') {
+      orderBy = { price: 'desc' };
+    } else if (sort === 'newest') {
+      orderBy = { isNewArrival: 'desc' };
+    } else {
+      orderBy = [{ isBestSeller: 'desc' }, { rating: 'desc' }];
+    }
+
+    const products = await prisma.product.findMany({
+      where,
+      orderBy,
+    });
+
+    const dtos = products.map(toProductDto);
+
+    return NextResponse.json({
+      success: true,
+      total: dtos.length,
+      products: dtos,
+    });
+  } catch (error) {
+    console.error('Products API Error:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to retrieve products' },
+      { status: 500 }
     );
   }
-
-  if (category) {
-    filtered = filtered.filter((p) => p.category === category);
-  }
-
-  if (caffeine) {
-    filtered = filtered.filter((p) => p.caffeineLevel.toLowerCase().includes(caffeine.toLowerCase()));
-  }
-
-  if (benefit) {
-    filtered = filtered.filter((p) => p.benefits.some((b) => b.toLowerCase().includes(benefit.toLowerCase())));
-  }
-
-  if (minPrice > 0 || maxPrice < 10000) {
-    filtered = filtered.filter((p) => p.price >= minPrice && p.price <= maxPrice);
-  }
-
-  // Sorting
-  if (sort === 'price-low') {
-    filtered.sort((a, b) => a.price - b.price);
-  } else if (sort === 'price-high') {
-    filtered.sort((a, b) => b.price - a.price);
-  } else if (sort === 'newest') {
-    filtered.sort((a, b) => (b.isNewArrival ? 1 : 0) - (a.isNewArrival ? 1 : 0));
-  } else {
-    // Default featured / best sellers
-    filtered.sort((a, b) => (b.isBestSeller ? 1 : 0) - (a.isBestSeller ? 1 : 0));
-  }
-
-  return NextResponse.json({
-    success: true,
-    total: filtered.length,
-    products: filtered,
-  });
 }
 
 export async function POST(request: Request) {
@@ -81,25 +96,70 @@ export async function POST(request: Request) {
       );
     }
 
-    const validData = validation.data;
-    const newProduct = {
-      _id: `prod-${Date.now()}`,
-      ...body,
-      ...validData,
-      inStock: validData.stock > 0,
-      rating: body.rating || 5.0,
-      reviewCount: body.reviewCount || 0,
-    };
+    const data = validation.data;
+    const rawSlug = data.slug || data.name;
+    const slug = rawSlug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-');
 
-    inMemoryStore.products.unshift(newProduct);
+    const existing = await prisma.product.findUnique({
+      where: { slug },
+    });
+
+    if (existing) {
+      return NextResponse.json(
+        { success: false, message: 'A product with this slug already exists' },
+        { status: 409 }
+      );
+    }
+
+    const product = await prisma.product.create({
+      data: {
+        name: data.name,
+        slug,
+        subtitle: body.subtitle || '',
+        description: data.description,
+        category: data.category,
+        categoryName: body.categoryName || data.category,
+        price: data.price,
+        mrp: data.mrp,
+        discountPercentage: data.discountPercentage || 0,
+        stock: data.stock,
+        inStock: data.stock > 0,
+        isFeatured: Boolean(data.isFeatured),
+        isBestSeller: Boolean(data.isBestSeller),
+        isNewArrival: Boolean(data.isNewArrival),
+        images: data.images || [],
+        weightVariants: body.weightVariants || [],
+        ingredients: body.ingredients || [],
+        benefits: body.benefits || [],
+        caffeineLevel: data.caffeineLevel || 'Naturally Caffeine-Free',
+        brewingGuide: body.brewingGuide || {},
+        nutritionInfo: body.nutritionInfo || {},
+        flavorProfile: body.flavorProfile || '',
+        storageInstructions: body.storageInstructions || '',
+        netQuantity: body.netQuantity || '',
+        keyHerbs: body.keyHerbs || [],
+        certifications: body.certifications || [],
+        sku: body.sku || `PBH-${Date.now()}`,
+        origin: body.origin || 'PrimeBrew Herbis Own Farms, Karnataka',
+      },
+    });
+
+    await logAdminAction(auth.admin?.email || 'admin', 'CREATE', 'PRODUCT', product.id, {
+      name: product.name,
+      slug: product.slug,
+      price: product.price,
+    });
 
     return NextResponse.json({
       success: true,
       message: 'Product created successfully',
-      product: newProduct,
+      product: toProductDto(product),
     });
-  } catch (error: any) {
-    console.error('Error creating product:', error);
-    return NextResponse.json({ success: false, message: 'An unexpected error occurred while creating product' }, { status: 500 });
+  } catch (error) {
+    console.error('Create product error:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to create product' },
+      { status: 500 }
+    );
   }
 }

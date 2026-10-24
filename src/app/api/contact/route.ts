@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { inMemoryStore } from '@/lib/db';
+import { prisma } from '@/lib/prisma';
 import { verifyAdminToken } from '@/lib/auth';
 import { contactSchema } from '@/lib/validators';
 import { checkContactRateLimit, getClientIp } from '@/lib/rateLimit';
@@ -13,11 +13,15 @@ export async function GET(request: Request) {
   }
 
   try {
+    const queries = await prisma.contactQuery.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+
     return NextResponse.json({
       success: true,
-      queries: inMemoryStore.contactQueries,
+      queries,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error fetching contact queries:', error);
     return NextResponse.json(
       { success: false, message: 'An unexpected error occurred while fetching contact queries' },
@@ -48,25 +52,33 @@ export async function POST(request: Request) {
 
     const { name, email, phone, subject, message } = validation.data;
 
-    const newQuery = {
-      id: `q-${Date.now()}`,
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      phone: phone ? phone.trim() : '',
-      subject: subject ? subject.trim() : 'General Customer Query',
-      message: message.trim(),
-      createdAt: new Date().toISOString(),
-      status: 'Unread' as const,
-    };
+    const newQuery = await prisma.contactQuery.create({
+      data: {
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone ? phone.trim() : null,
+        subject: subject ? subject.trim() : 'General Customer Query',
+        message: message.trim(),
+        status: 'Unread',
+      },
+    });
 
-    inMemoryStore.contactQueries.unshift(newQuery);
+    // Notify admin
+    await prisma.notification.create({
+      data: {
+        title: `New Support Query: ${newQuery.name}`,
+        message: `${newQuery.email}: "${newQuery.message.slice(0, 80)}..."`,
+        type: 'info',
+        link: '/admin/support',
+      },
+    });
 
     return NextResponse.json({
       success: true,
       message: 'Query sent successfully! Our customer support representative will get back to you soon.',
       query: newQuery,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error handling contact submission:', error);
     return NextResponse.json(
       { success: false, message: 'An unexpected error occurred while sending your message' },
@@ -85,16 +97,24 @@ export async function PATCH(request: Request) {
     const body = await request.json();
     const { id, status } = body;
 
-    const query = inMemoryStore.contactQueries.find((q) => q.id === id);
-    if (query && status) {
-      query.status = status;
+    if (!id || !status) {
+      return NextResponse.json({ success: false, message: 'ID and status are required' }, { status: 400 });
     }
+
+    await prisma.contactQuery.update({
+      where: { id },
+      data: { status },
+    });
+
+    const queries = await prisma.contactQuery.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
 
     return NextResponse.json({
       success: true,
-      queries: inMemoryStore.contactQueries,
+      queries,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error updating contact query status:', error);
     return NextResponse.json(
       { success: false, message: 'An unexpected error occurred while updating query status' },
@@ -113,15 +133,24 @@ export async function DELETE(request: Request) {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
-    if (id) {
-      inMemoryStore.contactQueries = inMemoryStore.contactQueries.filter((q) => q.id !== id);
+    if (!id) {
+      return NextResponse.json({ success: false, message: 'Query ID is required' }, { status: 400 });
     }
+
+    await prisma.contactQuery.delete({
+      where: { id },
+    });
+
+    const queries = await prisma.contactQuery.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
 
     return NextResponse.json({
       success: true,
-      queries: inMemoryStore.contactQueries,
+      message: 'Query deleted successfully',
+      queries,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error deleting contact query:', error);
     return NextResponse.json(
       { success: false, message: 'An unexpected error occurred while deleting query' },

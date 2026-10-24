@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
-import { UserModel } from '@/models/User';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,11 +8,9 @@ const JWT_SECRET = process.env.JWT_SECRET!;
 if (!JWT_SECRET) throw new Error('JWT_SECRET is not configured');
 
 export async function GET(request: Request) {
-  await connectToDatabase();
-
   try {
-    // 1. Read token from cookie or Authorization header
-    let token = request.headers.get('cookie')
+    let token = request.headers
+      .get('cookie')
       ?.split(';')
       .find((c) => c.trim().startsWith('pbh_token='))
       ?.split('=')[1];
@@ -33,7 +29,6 @@ export async function GET(request: Request) {
       );
     }
 
-    // 2. Verify JWT signature & expiration
     const decoded = jwt.verify(token, JWT_SECRET) as {
       userId: string;
       email: string;
@@ -48,32 +43,35 @@ export async function GET(request: Request) {
       );
     }
 
-    // 3. Find user in MongoDB Atlas or memory store
     const cleanEmail = decoded.email.trim().toLowerCase();
-    let dbUser: any = null;
+    const user = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+      include: { addresses: true },
+    });
 
-    try {
-      dbUser = await UserModel.findOne({ email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }).lean();
-    } catch (err) {}
-
-    if (!dbUser) {
-      dbUser = inMemoryStore.findUserByEmail(cleanEmail);
-    }
-
-    if (!dbUser) {
+    if (!user) {
       return NextResponse.json(
         { success: false, message: 'User profile not found in database', user: null },
         { status: 404 }
       );
     }
 
-    const { passwordHash, ...safeUser } = dbUser;
+    const safeUser = {
+      _id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone || '',
+      role: user.role.toLowerCase() as 'customer' | 'admin',
+      walletBalance: user.walletBalance,
+      wishlist: user.wishlist,
+      addresses: user.addresses,
+    };
 
     return NextResponse.json({
       success: true,
       user: safeUser,
     });
-  } catch (error: any) {
+  } catch (error) {
     return NextResponse.json(
       { success: false, message: 'Token invalid or expired', user: null },
       { status: 401 }

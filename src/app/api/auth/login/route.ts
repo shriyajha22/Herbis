@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
-import { UserModel } from '@/models/User';
+import { prisma } from '@/lib/prisma';
 import { loginSchema } from '@/lib/validators';
 import { checkAuthRateLimit, getClientIp } from '@/lib/rateLimit';
 
@@ -23,8 +21,6 @@ export async function POST(request: Request) {
   }
 
   try {
-    await connectToDatabase();
-
     const body = await request.json();
     const validation = loginSchema.safeParse(body);
     if (!validation.success) {
@@ -37,26 +33,12 @@ export async function POST(request: Request) {
     const { email, password } = validation.data;
     const cleanEmail = email.trim().toLowerCase();
 
-    let user: any = null;
-    try {
-      user = await UserModel.findOne({ email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }).lean();
-    } catch (dbErr) {
-      console.warn('MongoDB lookup warning during login:', dbErr);
-    }
+    const user = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+      include: { addresses: true },
+    });
 
-    if (!user) {
-      user = inMemoryStore.findUserByEmail(cleanEmail);
-    }
-
-    if (!user) {
-      return NextResponse.json(
-        { success: false, message: 'Invalid email or password' },
-        { status: 401 }
-      );
-    }
-
-    // Password comparison logic
-    if (!user.passwordHash) {
+    if (!user || !user.passwordHash) {
       return NextResponse.json(
         { success: false, message: 'Invalid email or password' },
         { status: 401 }
@@ -64,7 +46,6 @@ export async function POST(request: Request) {
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
-
     if (!isPasswordValid) {
       return NextResponse.json(
         { success: false, message: 'Invalid email or password' },
@@ -72,17 +53,39 @@ export async function POST(request: Request) {
       );
     }
 
-    // Record active session
-    inMemoryStore.recordUserActivity(user.name, user.email, '/login');
+    // Record session activity
+    await prisma.activeSession.upsert({
+      where: { email: cleanEmail },
+      update: {
+        name: user.name,
+        currentPage: '/login',
+        lastActive: new Date(),
+        isOnline: true,
+      },
+      create: {
+        email: cleanEmail,
+        name: user.name,
+        currentPage: '/login',
+        isOnline: true,
+      },
+    });
 
-    // Sign JWT session token
     const token = jwt.sign(
-      { userId: user._id.toString(), email: user.email, role: user.role, name: user.name },
+      { userId: user.id, email: user.email, role: user.role.toLowerCase(), name: user.name },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    const safeUser = inMemoryStore.sanitizeUser(user);
+    const safeUser = {
+      _id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone || '',
+      role: user.role.toLowerCase() as 'customer' | 'admin',
+      walletBalance: user.walletBalance,
+      wishlist: user.wishlist,
+      addresses: user.addresses,
+    };
 
     const response = NextResponse.json({
       success: true,
@@ -99,10 +102,10 @@ export async function POST(request: Request) {
     });
 
     return response;
-  } catch (error: any) {
-    console.error('Error handling customer login:', error);
+  } catch (error) {
+    console.error('Login error:', error);
     return NextResponse.json(
-      { success: false, message: 'An unexpected error occurred during authentication' },
+      { success: false, message: 'An unexpected error occurred during login' },
       { status: 500 }
     );
   }

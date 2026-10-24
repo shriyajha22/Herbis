@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
-import { UserModel } from '@/models/User';
+import { Role } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { registerSchema } from '@/lib/validators';
 import { checkRegisterRateLimit, getClientIp } from '@/lib/rateLimit';
 
@@ -23,8 +22,6 @@ export async function POST(request: Request) {
   }
 
   try {
-    await connectToDatabase();
-
     const body = await request.json();
     const validation = registerSchema.safeParse(body);
     if (!validation.success) {
@@ -37,14 +34,9 @@ export async function POST(request: Request) {
     const { name, email, phone, password } = validation.data;
     const cleanEmail = email.trim().toLowerCase();
 
-    // Check if account already exists
-    let existing: any = null;
-    try {
-      existing = await UserModel.findOne({ email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') });
-    } catch (err) {}
-    if (!existing) {
-      existing = inMemoryStore.findUserByEmail(cleanEmail);
-    }
+    const existing = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+    });
 
     if (existing) {
       return NextResponse.json(
@@ -53,54 +45,59 @@ export async function POST(request: Request) {
       );
     }
 
-    // Hash password with bcryptjs
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const userDocData = {
-      name: name.trim(),
-      email: cleanEmail,
-      phone: phone ? phone.trim() : '',
-      passwordHash,
-      role: 'customer' as const,
-      walletBalance: 250,
-      addresses: [],
-      wishlist: [],
-    };
+    const user = await prisma.user.create({
+      data: {
+        name: name.trim(),
+        email: cleanEmail,
+        phone: phone ? phone.trim() : null,
+        passwordHash,
+        role: Role.CUSTOMER,
+        walletBalance: 250,
+      },
+      include: {
+        addresses: true,
+      },
+    });
 
-    let createdUser: any = null;
-    try {
-      const doc = await UserModel.create(userDocData);
-      if (doc) {
-        createdUser = doc.toObject ? doc.toObject() : doc;
-        createdUser._id = doc._id.toString();
-      }
-    } catch (err) {
-      console.warn('MongoDB user creation error:', err);
-    }
+    // Record session activity
+    await prisma.activeSession.upsert({
+      where: { email: cleanEmail },
+      update: {
+        name: user.name,
+        currentPage: '/register',
+        lastActive: new Date(),
+        isOnline: true,
+      },
+      create: {
+        email: cleanEmail,
+        name: user.name,
+        currentPage: '/register',
+        isOnline: true,
+      },
+    });
 
-    if (!createdUser) {
-      // Local fallback only if MongoDB is unconfigured
-      const fallbackPayload = { _id: `usr-${Date.now()}`, ...userDocData };
-      createdUser = inMemoryStore.createUser(fallbackPayload);
-    } else {
-      // Sync into memory cache
-      inMemoryStore.createUser(createdUser);
-    }
-
-    inMemoryStore.recordUserActivity(createdUser.name, createdUser.email, '/register');
-
-    // Sign JWT token
     const token = jwt.sign(
-      { userId: createdUser._id.toString(), email: createdUser.email, role: 'customer', name: createdUser.name },
+      { userId: user.id, email: user.email, role: 'customer', name: user.name },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    const safeUser = inMemoryStore.sanitizeUser(createdUser);
+    const safeUser = {
+      _id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone || '',
+      role: 'customer' as const,
+      walletBalance: user.walletBalance,
+      wishlist: user.wishlist,
+      addresses: user.addresses,
+    };
 
     const response = NextResponse.json({
       success: true,
-      message: 'Account created successfully',
+      message: 'Account created successfully! Welcome bonus ₹250 added to your wallet.',
       user: safeUser,
     });
 
@@ -113,10 +110,10 @@ export async function POST(request: Request) {
     });
 
     return response;
-  } catch (error: any) {
-    console.error('Error handling customer registration:', error);
+  } catch (error) {
+    console.error('Registration API Error:', error);
     return NextResponse.json(
-      { success: false, message: 'An unexpected error occurred during registration' },
+      { success: false, message: 'Registration failed. Please try again.' },
       { status: 500 }
     );
   }

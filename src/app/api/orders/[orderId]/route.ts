@@ -1,10 +1,91 @@
 import { NextResponse } from 'next/server';
-import mongoose from 'mongoose';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
-import { OrderModel } from '@/models/Order';
-import { verifyAdminToken } from '@/lib/auth';
+import { OrderStatus } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
+import { verifyAdminToken, verifyCustomerToken } from '@/lib/auth';
+import { logAdminAction } from '@/lib/audit';
+import { getOrderItemImage } from '@/lib/seedData';
 
 export const dynamic = 'force-dynamic';
+
+function formatOrder(order: any) {
+  return {
+    _id: order.id,
+    id: order.id,
+    orderNumber: order.orderNumber,
+    userId: order.userId,
+    status: order.status,
+    orderStatus: order.status,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
+    subtotal: order.subtotal,
+    discount: order.discount,
+    shippingFee: order.shippingFee,
+    tax: order.tax,
+    total: order.total,
+    trackingNumber: order.trackingNumber,
+    courierName: order.courierName,
+    estimatedDelivery: order.estimatedDelivery,
+    shippingAddress: order.shippingAddress,
+    createdAt: order.createdAt ? new Date(order.createdAt).toISOString() : new Date().toISOString(),
+    items: (order.items || []).map((it: any) => ({
+      _id: it.id,
+      productId: it.productId,
+      productName: it.productName,
+      productImage: getOrderItemImage(it) || it.productImage || '/images/blue-tea.jpg',
+      image: getOrderItemImage(it) || it.productImage || '/images/blue-tea.jpg',
+      price: it.price,
+      quantity: it.quantity,
+      weight: it.weight || '30 Tea Bags',
+    })),
+  };
+}
+
+export async function GET(
+  request: Request,
+  context: { params: { orderId: string } | Promise<{ orderId: string }> }
+) {
+  try {
+    const params = await context.params;
+    const { orderId } = params;
+
+    const order = await prisma.order.findFirst({
+      where: {
+        OR: [
+          { id: orderId },
+          { orderNumber: { equals: orderId.trim(), mode: 'insensitive' } },
+        ],
+      },
+      include: { items: true },
+    });
+
+    if (!order) {
+      return NextResponse.json({ success: false, message: 'Order not found' }, { status: 404 });
+    }
+
+    const auth = verifyCustomerToken(request);
+    const isOwnerOrAdmin =
+      auth.isAuthorized &&
+      auth.user &&
+      (auth.user.role === 'admin' ||
+        auth.user.userId === order.userId ||
+        (order.shippingAddress as any)?.email?.toLowerCase() === auth.user.email.toLowerCase());
+
+    if (!isOwnerOrAdmin) {
+      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 403 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      order: formatOrder(order),
+    });
+  } catch (error) {
+    console.error('Get order error:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to retrieve order' },
+      { status: 500 }
+    );
+  }
+}
 
 export async function PATCH(
   request: Request,
@@ -15,56 +96,54 @@ export async function PATCH(
     return auth.errorResponse!;
   }
 
-  await connectToDatabase();
   try {
     const params = await context.params;
     const { orderId } = params;
     const body = await request.json();
 
-    const updateFields: any = {};
-    if (body.orderStatus) updateFields.orderStatus = body.orderStatus;
-    if (body.paymentStatus) updateFields.paymentStatus = body.paymentStatus;
-    if (body.trackingNumber !== undefined) updateFields.trackingNumber = body.trackingNumber;
-    if (body.courierName !== undefined) updateFields.courierName = body.courierName;
+    const existing = await prisma.order.findFirst({
+      where: {
+        OR: [
+          { id: orderId },
+          { orderNumber: { equals: orderId.trim(), mode: 'insensitive' } },
+        ],
+      },
+    });
 
-    // 1. Update in MongoDB if connected
-    let updatedOrder: any = null;
-    if (mongoose.connection.readyState === 1) {
-      updatedOrder = await OrderModel.findOneAndUpdate(
-        { $or: [{ _id: orderId }, { orderNumber: new RegExp(`^${orderId.trim()}$`, 'i') }] },
-        { $set: updateFields },
-        { new: true }
-      ).lean();
+    if (!existing) {
+      return NextResponse.json({ success: false, message: 'Order not found' }, { status: 404 });
     }
 
-    // 2. Update in memory store
-    const orderIndex = inMemoryStore.orders.findIndex(
-      (o) => o._id === orderId || o.orderNumber.toLowerCase() === orderId.toLowerCase()
-    );
-
-    if (orderIndex !== -1) {
-      const currentOrder = inMemoryStore.orders[orderIndex];
-      if (body.orderStatus) currentOrder.orderStatus = body.orderStatus;
-      if (body.paymentStatus) currentOrder.paymentStatus = body.paymentStatus;
-      if (body.trackingNumber !== undefined) currentOrder.trackingNumber = body.trackingNumber;
-      if (body.courierName !== undefined) currentOrder.courierName = body.courierName;
-      inMemoryStore.orders[orderIndex] = currentOrder;
-      if (!updatedOrder) updatedOrder = currentOrder;
+    const data: any = {};
+    if (body.orderStatus || body.status) {
+      const rawStatus = (body.orderStatus || body.status).toUpperCase();
+      if (Object.values(OrderStatus).includes(rawStatus as OrderStatus)) {
+        data.status = rawStatus as OrderStatus;
+      }
     }
+    if (body.paymentStatus) data.paymentStatus = body.paymentStatus;
+    if (body.trackingNumber !== undefined) data.trackingNumber = body.trackingNumber;
+    if (body.courierName !== undefined) data.courierName = body.courierName;
+    if (body.estimatedDelivery !== undefined) data.estimatedDelivery = body.estimatedDelivery;
 
-    if (!updatedOrder) {
-      return NextResponse.json(
-        { success: false, message: 'Order not found' },
-        { status: 404 }
-      );
-    }
+    const updated = await prisma.order.update({
+      where: { id: existing.id },
+      data,
+      include: { items: true },
+    });
+
+    await logAdminAction(auth.admin?.email || 'admin', 'UPDATE', 'ORDER', updated.id, {
+      orderNumber: updated.orderNumber,
+      changes: data,
+    });
 
     return NextResponse.json({
       success: true,
       message: 'Order updated successfully',
-      order: updatedOrder,
+      order: formatOrder(updated),
     });
   } catch (error) {
+    console.error('Update order error:', error);
     return NextResponse.json(
       { success: false, message: 'Failed to update order' },
       { status: 500 }

@@ -56,9 +56,11 @@ export const orderCreateSchema = z.object({
 
 export const productSchema = z.object({
   name: z.string().trim().min(2, 'Product name is required').max(200),
+  slug: z.string().trim().optional(),
   description: z.string().trim().min(5, 'Product description is required'),
   price: z.number().positive('Price must be greater than zero'),
   mrp: z.number().positive('MRP must be greater than zero'),
+  discountPercentage: z.number().nonnegative().optional(),
   stock: z.number().int().nonnegative('Stock cannot be negative'),
   category: z.string().trim().min(1, 'Category is required'),
   categoryName: z.string().optional(),

@@ -1,57 +1,39 @@
 import { NextResponse } from 'next/server';
-import mongoose from 'mongoose';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
+import { Role } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { verifyAdminToken } from '@/lib/auth';
-import { UserModel } from '@/models/User';
+import { logAdminAction } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } | Promise<{ id: string }> }
 ) {
-  // 1. Verify authenticated admin session
   const auth = verifyAdminToken(request);
   if (!auth.isAuthorized) {
     return auth.errorResponse!;
   }
 
   try {
-    await connectToDatabase();
+    const params = await context.params;
+    const customerId = params?.id?.trim();
 
-    const customerId = params?.id;
-    if (!customerId || typeof customerId !== 'string') {
+    if (!customerId) {
       return NextResponse.json(
         { success: false, message: 'Valid customer ID is required.' },
         { status: 400 }
       );
     }
 
-    const cleanId = customerId.trim();
-
-    // 2. Find target customer in MongoDB UserModel or inMemoryStore
-    let targetUser: any = null;
-
-    // Check MongoDB first if valid ObjectId or query
-    if (mongoose.Types.ObjectId.isValid(cleanId)) {
-      targetUser = await UserModel.findById(cleanId).lean();
-    }
-    
-    if (!targetUser) {
-      targetUser = await UserModel.findOne({
-        $or: [
-          { _id: cleanId },
-          { email: cleanId.toLowerCase() }
-        ]
-      }).lean();
-    }
-
-    // Check inMemoryStore fallback
-    if (!targetUser) {
-      targetUser = inMemoryStore.users.find(
-        (u) => u._id === cleanId || u.email.toLowerCase() === cleanId.toLowerCase()
-      );
-    }
+    const targetUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: customerId },
+          { email: { equals: customerId, mode: 'insensitive' } },
+        ],
+      },
+    });
 
     if (!targetUser) {
       return NextResponse.json(
@@ -60,46 +42,42 @@ export async function DELETE(
       );
     }
 
-    // 3. Security Check: Prevent deleting admin accounts
-    if (targetUser.role === 'admin' || targetUser.email.toLowerCase() === 'contact.primebrew@gmail.com') {
+    if (
+      targetUser.role === Role.ADMIN ||
+      targetUser.email.toLowerCase() === 'contact.primebrew@gmail.com'
+    ) {
       return NextResponse.json(
         { success: false, message: 'Security restriction: Administrator accounts cannot be deleted.' },
         { status: 403 }
       );
     }
 
-    // 4. Perform MongoDB Deletion
-    let deletedCount = 0;
-    try {
-      const dbResult = await UserModel.deleteOne({
-        $or: [
-          { _id: targetUser._id },
-          { email: targetUser.email.toLowerCase() }
-        ]
-      });
-      deletedCount = dbResult.deletedCount || 0;
-    } catch (dbErr) {
-      console.warn('MongoDB customer deletion warning:', dbErr);
-    }
+    await prisma.user.delete({
+      where: { id: targetUser.id },
+    });
 
-    // 5. Remove from inMemoryStore & active sessions
-    inMemoryStore.deleteUser(targetUser._id);
-    inMemoryStore.deleteUser(targetUser.email);
-    inMemoryStore.setUserOffline(targetUser.email);
+    await prisma.activeSession.deleteMany({
+      where: { email: targetUser.email.toLowerCase() },
+    });
+
+    await logAdminAction(auth.admin?.email || 'admin', 'DELETE', 'CUSTOMER', targetUser.id, {
+      name: targetUser.name,
+      email: targetUser.email,
+    });
 
     return NextResponse.json({
       success: true,
       message: 'Customer deleted successfully.',
       deletedCustomer: {
-        id: targetUser._id,
+        id: targetUser.id,
         name: targetUser.name,
         email: targetUser.email,
       },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error deleting customer account:', error);
     return NextResponse.json(
-      { success: false, message: error?.message || 'Server error processing customer deletion.' },
+      { success: false, message: 'Failed to delete customer' },
       { status: 500 }
     );
   }

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { inMemoryStore } from '@/lib/db';
+import { prisma } from '@/lib/prisma';
 import { verifyAdminToken } from '@/lib/auth';
 import { sendContactReplyEmail } from '@/lib/mailer';
+import { logAdminAction } from '@/lib/audit';
 
 export async function POST(request: Request) {
   const auth = verifyAdminToken(request);
@@ -26,20 +27,32 @@ export async function POST(request: Request) {
       replyMessage
     );
 
-    // Update query status to Replied
     if (queryId) {
-      const query = inMemoryStore.contactQueries.find((q) => q.id === queryId);
-      if (query) {
-        query.status = 'Replied';
-      }
+      await prisma.contactQuery.update({
+        where: { id: queryId },
+        data: {
+          status: 'Replied',
+          replyMessage,
+          repliedAt: new Date(),
+        },
+      });
     }
+
+    await logAdminAction(auth.admin?.email || 'admin', 'REPLY', 'CONTACT_QUERY', queryId, {
+      customerEmail,
+      subject,
+    });
+
+    const queries = await prisma.contactQuery.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
 
     return NextResponse.json({
       success: true,
       message: `Reply recorded and sent to ${customerEmail}.`,
-      queries: inMemoryStore.contactQueries,
+      queries,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error dispatching contact reply:', error);
     return NextResponse.json(
       { success: false, message: 'An unexpected error occurred while dispatching email reply' },

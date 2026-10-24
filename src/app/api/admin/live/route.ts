@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import mongoose from 'mongoose';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
-import { OrderModel } from '@/models/Order';
+import { OrderStatus } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { verifyAdminToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -12,37 +11,60 @@ export async function GET(request: Request) {
     return auth.errorResponse!;
   }
 
-  await connectToDatabase();
-
   try {
-    const activeSessions = inMemoryStore.getActiveSessions();
-    const currentlyOnline = activeSessions.filter((s) => s.isOnline).length;
+    const activeThreshold = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes
+    const activeSessions = await prisma.activeSession.findMany({
+      where: {
+        isOnline: true,
+        lastActive: { gte: activeThreshold },
+      },
+      orderBy: { lastActive: 'desc' },
+    });
 
-    let ordersList: any[] = [];
-    try {
-      ordersList = await OrderModel.find({}).sort({ createdAt: -1 }).lean();
-    } catch (err) {}
-
-    if (ordersList.length === 0) {
-      ordersList = inMemoryStore.orders;
-    }
+    const currentlyOnline = activeSessions.length;
 
     const todayStr = new Date().toISOString().split('T')[0];
-    const todaysOrders = ordersList.filter((o) => o.createdAt.startsWith(todayStr)).length;
+    const todayStart = new Date(todayStr);
 
-    const pendingOrders = ordersList.filter((o) => o.orderStatus === 'Pending').length;
-    const ordersInDelivery = ordersList.filter((o) =>
-      ['Processing', 'Packed', 'Shipped', 'Out for Delivery'].includes(o.orderStatus)
-    ).length;
-    const completedOrders = ordersList.filter((o) => o.orderStatus === 'Delivered').length;
+    const [
+      todaysOrders,
+      pendingOrders,
+      ordersInDelivery,
+      completedOrders,
+      allOrders,
+    ] = await Promise.all([
+      prisma.order.count({
+        where: { createdAt: { gte: todayStart } },
+      }),
+      prisma.order.count({
+        where: { status: OrderStatus.PENDING },
+      }),
+      prisma.order.count({
+        where: {
+          status: {
+            in: [
+              OrderStatus.PROCESSING,
+              OrderStatus.PACKED,
+              OrderStatus.SHIPPED,
+              OrderStatus.OUT_FOR_DELIVERY,
+            ],
+          },
+        },
+      }),
+      prisma.order.count({
+        where: { status: OrderStatus.DELIVERED },
+      }),
+      prisma.order.findMany({
+        where: { status: { not: OrderStatus.CANCELLED } },
+        select: { total: true, createdAt: true },
+      }),
+    ]);
 
-    const todaysRevenue = ordersList
-      .filter((o) => o.createdAt.startsWith(todayStr) && o.orderStatus !== 'Cancelled')
-      .reduce((sum, o) => sum + (o.total || 0), 0);
+    const todaysRevenue = allOrders
+      .filter((o) => o.createdAt >= todayStart)
+      .reduce((sum, o) => sum + o.total, 0);
 
-    const totalRevenue = ordersList
-      .filter((o) => o.orderStatus !== 'Cancelled')
-      .reduce((sum, o) => sum + (o.total || 0), 0);
+    const totalRevenue = allOrders.reduce((sum, o) => sum + o.total, 0);
 
     return NextResponse.json({
       success: true,
@@ -56,12 +78,19 @@ export async function GET(request: Request) {
         todaysRevenue,
         totalRevenue,
       },
-      activeSessions,
-      orders: ordersList,
+      activeSessions: activeSessions.map((s) => ({
+        email: s.email,
+        name: s.name,
+        currentPage: s.currentPage,
+        loginTime: s.loginTime,
+        lastActive: s.lastActive,
+        isOnline: s.isOnline,
+      })),
     });
   } catch (error) {
+    console.error('Live status error:', error);
     return NextResponse.json(
-      { success: false, message: 'Failed to fetch live admin data' },
+      { success: false, message: 'Failed to retrieve live metrics' },
       { status: 500 }
     );
   }

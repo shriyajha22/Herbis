@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
+import { OrderStatus, Role } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { verifyAdminToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -10,68 +11,99 @@ export async function GET(request: Request) {
     return auth.errorResponse!;
   }
 
-  await connectToDatabase();
-
-  const totalOrders = inMemoryStore.orders.length;
-  const totalRevenue = inMemoryStore.orders.reduce((sum, o) => sum + (o.paymentStatus === 'Paid' ? o.total : 0), 0);
-
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayRevenue = inMemoryStore.orders
-    .filter((o) => o.createdAt.startsWith(todayStr))
-    .reduce((sum, o) => sum + (o.paymentStatus === 'Paid' ? o.total : 0), 0);
-
-  // Status breakdown counts
-  const pendingOrders = inMemoryStore.orders.filter((o) => o.orderStatus === 'Pending').length;
-  const processingOrders = inMemoryStore.orders.filter((o) => o.orderStatus === 'Processing').length;
-  const shippedOrders = inMemoryStore.orders.filter((o) => o.orderStatus === 'Shipped').length;
-  const deliveredOrders = inMemoryStore.orders.filter((o) => o.orderStatus === 'Delivered').length;
-  const cancelledOrders = inMemoryStore.orders.filter((o) => o.orderStatus === 'Cancelled').length;
-
-  const totalCustomers = inMemoryStore.users.filter((u) => u.role === 'customer').length;
-  const lowStockProducts = inMemoryStore.products.filter((p) => p.stock < 50);
-
-  // Calculate top selling products
-  const productSalesMap = new Map<string, { name: string; quantity: number; revenue: number }>();
-  inMemoryStore.orders.forEach((o) => {
-    o.items.forEach((item) => {
-      const existing = productSalesMap.get(item.productName) || { name: item.productName, quantity: 0, revenue: 0 };
-      existing.quantity += item.quantity;
-      existing.revenue += item.price * item.quantity;
-      productSalesMap.set(item.productName, existing);
+  try {
+    const orders = await prisma.order.findMany({
+      include: { items: true },
+      orderBy: { createdAt: 'desc' },
     });
-  });
 
-  const topProducts = Array.from(productSalesMap.values())
-    .sort((a, b) => b.quantity - a.quantity)
-    .slice(0, 5);
+    const totalOrders = orders.length;
+    const totalRevenue = orders.reduce(
+      (sum, o) => sum + (o.status !== OrderStatus.CANCELLED ? o.total : 0),
+      0
+    );
 
-  return NextResponse.json({
-    success: true,
-    metrics: {
-      totalRevenue,
-      todayRevenue,
-      totalOrders,
-      pendingOrders,
-      processingOrders,
-      shippedOrders,
-      deliveredOrders,
-      cancelledOrders,
-      totalCustomers,
-      conversionRate: "4.8%",
-      visitorsToday: 1240,
-    },
-    lowStockAlerts: lowStockProducts,
-    recentOrders: inMemoryStore.orders.slice(0, 5),
-    topProducts,
-    salesGraph: [
-      { month: "Jan", sales: 18500 },
-      { month: "Feb", sales: 22400 },
-      { month: "Mar", sales: 28900 },
-      { month: "Apr", sales: 31200 },
-      { month: "May", sales: 36800 },
-      { month: "Jun", sales: 42100 },
-      { month: "Jul", sales: 49500 },
-      { month: "Aug", sales: totalRevenue },
-    ],
-  });
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayRevenue = orders
+      .filter((o) => o.createdAt.toISOString().startsWith(todayStr) && o.status !== OrderStatus.CANCELLED)
+      .reduce((sum, o) => sum + o.total, 0);
+
+    const pendingOrders = orders.filter((o) => o.status === OrderStatus.PENDING).length;
+    const processingOrders = orders.filter((o) => o.status === OrderStatus.PROCESSING).length;
+    const shippedOrders = orders.filter((o) => o.status === OrderStatus.SHIPPED).length;
+    const deliveredOrders = orders.filter((o) => o.status === OrderStatus.DELIVERED).length;
+    const cancelledOrders = orders.filter((o) => o.status === OrderStatus.CANCELLED).length;
+
+    const totalCustomers = await prisma.user.count({
+      where: { role: Role.CUSTOMER },
+    });
+
+    const lowStockProducts = await prisma.product.findMany({
+      where: { stock: { lt: 50 } },
+    });
+
+    // Top selling products calculation
+    const productSalesMap = new Map<string, { name: string; quantity: number; revenue: number }>();
+    orders.forEach((o) => {
+      if (o.status !== OrderStatus.CANCELLED) {
+        o.items.forEach((item) => {
+          const existing = productSalesMap.get(item.productName) || {
+            name: item.productName,
+            quantity: 0,
+            revenue: 0,
+          };
+          existing.quantity += item.quantity;
+          existing.revenue += item.price * item.quantity;
+          productSalesMap.set(item.productName, existing);
+        });
+      }
+    });
+
+    const topProducts = Array.from(productSalesMap.values())
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 5);
+
+    return NextResponse.json({
+      success: true,
+      metrics: {
+        totalRevenue,
+        todayRevenue,
+        totalOrders,
+        pendingOrders,
+        processingOrders,
+        shippedOrders,
+        deliveredOrders,
+        cancelledOrders,
+        totalCustomers,
+        conversionRate: '4.8%',
+        visitorsToday: 1240,
+      },
+      lowStockAlerts: lowStockProducts,
+      recentOrders: orders.slice(0, 5).map((o) => ({
+        _id: o.id,
+        orderNumber: o.orderNumber,
+        status: o.status,
+        total: o.total,
+        createdAt: o.createdAt,
+        itemsCount: o.items.length,
+      })),
+      topProducts,
+      salesGraph: [
+        { month: 'Jan', sales: 18500 },
+        { month: 'Feb', sales: 22400 },
+        { month: 'Mar', sales: 28900 },
+        { month: 'Apr', sales: 31200 },
+        { month: 'May', sales: 36800 },
+        { month: 'Jun', sales: 42100 },
+        { month: 'Jul', sales: 49500 },
+        { month: 'Aug', sales: totalRevenue },
+      ],
+    });
+  } catch (error) {
+    console.error('Analytics API Error:', error);
+    return NextResponse.json(
+      { success: false, message: 'Failed to retrieve analytics' },
+      { status: 500 }
+    );
+  }
 }

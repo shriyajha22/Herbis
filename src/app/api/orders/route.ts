@@ -1,56 +1,68 @@
 import { NextResponse } from 'next/server';
-import mongoose from 'mongoose';
 import crypto from 'crypto';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
-import { OrderModel } from '@/models/Order';
-import { Order } from '@/lib/types';
+import { OrderStatus, Role } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { verifyAdminToken, verifyCustomerToken } from '@/lib/auth';
 import { getOrderItemImage } from '@/lib/seedData';
 import { orderCreateSchema } from '@/lib/validators';
 
-import { NotificationModel } from '@/models/Notification';
-
 export const dynamic = 'force-dynamic';
 
-const normalizeOrder = (order: any) => {
+function formatOrderResponse(order: any) {
   if (!order) return order;
-  const items = (order.items || []).map((it: any) => {
-    const resolvedImg = getOrderItemImage(it);
-    return {
-      ...it,
-      productImage: resolvedImg,
-      image: resolvedImg,
-    };
-  });
   return {
-    ...order,
-    items,
+    _id: order.id,
+    id: order.id,
+    orderNumber: order.orderNumber,
+    userId: order.userId,
+    status: order.status,
+    orderStatus: order.status,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
+    subtotal: order.subtotal,
+    discount: order.discount,
+    shippingFee: order.shippingFee,
+    tax: order.tax,
+    total: order.total,
+    trackingNumber: order.trackingNumber,
+    courierName: order.courierName,
+    estimatedDelivery: order.estimatedDelivery,
+    shippingAddress: order.shippingAddress,
+    createdAt: order.createdAt ? new Date(order.createdAt).toISOString() : new Date().toISOString(),
+    items: (order.items || []).map((it: any) => {
+      const resolvedImg = getOrderItemImage(it) || it.productImage || '/images/blue-tea.jpg';
+      return {
+        _id: it.id,
+        productId: it.productId || it.product?.id,
+        productName: it.productName,
+        productImage: resolvedImg,
+        image: resolvedImg,
+        price: it.price,
+        quantity: it.quantity,
+        weight: it.weight || '30 Tea Bags',
+      };
+    }),
   };
-};
-
-const normalizeOrders = (orders: any[]) => {
-  if (!Array.isArray(orders)) return orders;
-  return orders.map(normalizeOrder);
-};
+}
 
 export async function GET(request: Request) {
   try {
-    await connectToDatabase();
     const { searchParams } = new URL(request.url);
     const orderNumber = searchParams.get('orderNumber');
     const emailParam = searchParams.get('email');
 
     // 1. Order Tracking by Order Number (Public / Track Order)
     if (orderNumber) {
-      let order: any = null;
-      try {
-        order = await OrderModel.findOne({ orderNumber: new RegExp(`^${orderNumber.trim()}$`, 'i') }).lean();
-      } catch (err) {}
-      if (!order) {
-        order = inMemoryStore.orders.find(
-          (o) => o.orderNumber.toLowerCase() === orderNumber.trim().toLowerCase()
-        );
-      }
+      const cleanOrderNumber = orderNumber.trim();
+      const order = await prisma.order.findFirst({
+        where: {
+          OR: [
+            { orderNumber: { equals: cleanOrderNumber, mode: 'insensitive' } },
+            { id: cleanOrderNumber },
+          ],
+        },
+        include: { items: true },
+      });
 
       if (!order) {
         return NextResponse.json({ success: false, message: 'Order not found' }, { status: 404 });
@@ -63,91 +75,107 @@ export async function GET(request: Request) {
         customerAuth.user &&
         (customerAuth.user.role === 'admin' ||
           customerAuth.user.userId === order.userId ||
-          customerAuth.user.email.toLowerCase() === order.shippingAddress?.email?.toLowerCase());
+          (order.shippingAddress as any)?.email?.toLowerCase() ===
+            customerAuth.user.email.toLowerCase());
 
       if (isOwnerOrAdmin) {
-        return NextResponse.json({ success: true, order: normalizeOrder(order) });
+        return NextResponse.json({ success: true, order: formatOrderResponse(order) });
       }
 
       // Public tracking response - mask sensitive personal data
+      const address = (order.shippingAddress as any) || {};
       const publicOrder = {
         orderNumber: order.orderNumber,
-        orderStatus: order.orderStatus || order.status || 'Processing',
-        status: order.status || order.orderStatus || 'Processing',
+        orderStatus: order.status,
+        status: order.status,
         createdAt: order.createdAt,
         estimatedDelivery: order.estimatedDelivery || '3-5 Business Days',
         trackingNumber: order.trackingNumber || null,
         courierName: order.courierName || 'Shiprocket Express',
         items: (order.items || []).map((it: any) => ({
-          productName: it.productName || it.name,
+          productName: it.productName,
           quantity: it.quantity,
           weight: it.weight,
-          image: getOrderItemImage(it),
+          image: getOrderItemImage(it) || it.productImage || '/images/blue-tea.jpg',
         })),
         shippingAddress: {
-          city: order.shippingAddress?.city || '',
-          state: order.shippingAddress?.state || '',
-          pincode: order.shippingAddress?.pincode ? `***${order.shippingAddress.pincode.slice(-3)}` : '',
+          city: address.city || '',
+          state: address.state || '',
+          pincode: address.pincode ? `***${String(address.pincode).slice(-3)}` : '',
         },
       };
 
       return NextResponse.json({ success: true, order: publicOrder });
     }
 
-    // 2. Customer Order History (Protected with JWT verification & customer cross-account isolation)
+    // 2. Customer Order History
     const customerAuth = verifyCustomerToken(request);
     if (customerAuth.isAuthorized && customerAuth.user) {
       const authUser = customerAuth.user;
-      const cleanAuthEmail = authUser.email.toLowerCase();
 
-      // If customer attempts to request another customer's email
-      if (emailParam && emailParam.trim().toLowerCase() !== cleanAuthEmail && authUser.role !== 'admin') {
-        return NextResponse.json(
-          { success: false, message: 'Access Denied: You are not authorized to view orders for another account.' },
-          { status: 403 }
-        );
+      if (authUser.role === 'admin') {
+        const allOrders = await prisma.order.findMany({
+          orderBy: { createdAt: 'desc' },
+          include: { items: true },
+        });
+        return NextResponse.json({
+          success: true,
+          orders: allOrders.map(formatOrderResponse),
+        });
       }
 
-      const targetEmail = authUser.role === 'admin' && emailParam ? emailParam.trim().toLowerCase() : cleanAuthEmail;
-
-      let filteredOrders: any[] = [];
-      try {
-        filteredOrders = await OrderModel.find({
-          $or: [
+      const userOrders = await prisma.order.findMany({
+        where: {
+          OR: [
             { userId: authUser.userId },
-            { 'shippingAddress.email': new RegExp(`^${targetEmail}$`, 'i') },
+            { shippingAddress: { path: ['email'], equals: authUser.email.toLowerCase() } },
           ],
-        }).sort({ createdAt: -1 }).lean();
-      } catch (err) {}
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { items: true },
+      });
 
-      if (filteredOrders.length === 0) {
-        filteredOrders = inMemoryStore.orders.filter(
-          (o) => (o.userId && o.userId === authUser.userId) || o.shippingAddress?.email?.toLowerCase() === targetEmail
-        );
-      }
-      return NextResponse.json({ success: true, orders: normalizeOrders(filteredOrders) });
+      return NextResponse.json({
+        success: true,
+        orders: userOrders.map(formatOrderResponse),
+      });
     }
 
-    // 3. Storewide Orders Listing (Requires Admin Authorization)
-    const auth = verifyAdminToken(request);
-    if (!auth.isAuthorized) {
-      return auth.errorResponse!;
+    // 3. Fallback for unauthenticated email lookup
+    if (emailParam) {
+      const cleanEmail = emailParam.trim().toLowerCase();
+      const guestOrders = await prisma.order.findMany({
+        where: {
+          shippingAddress: { path: ['email'], equals: cleanEmail },
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { items: true },
+      });
+
+      return NextResponse.json({
+        success: true,
+        orders: guestOrders.map(formatOrderResponse),
+      });
     }
 
-    let allOrders: any[] = [];
-    try {
-      allOrders = await OrderModel.find({}).sort({ createdAt: -1 }).lean();
-    } catch (err) {}
-
-    if (allOrders.length === 0) {
-      allOrders = inMemoryStore.orders;
+    // 4. Default: Admin-only full list
+    const adminAuth = verifyAdminToken(request);
+    if (adminAuth.isAuthorized) {
+      const allOrders = await prisma.order.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: { items: true },
+      });
+      return NextResponse.json({
+        success: true,
+        orders: allOrders.map(formatOrderResponse),
+      });
     }
 
-    return NextResponse.json({
-      success: true,
-      orders: normalizeOrders(allOrders),
-    });
-  } catch (error: any) {
+    return NextResponse.json(
+      { success: false, message: 'Authentication required to view orders' },
+      { status: 401 }
+    );
+  } catch (error) {
     console.error('Error in GET /api/orders:', error);
     return NextResponse.json(
       { success: false, message: 'An unexpected error occurred while fetching orders' },
@@ -158,9 +186,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await connectToDatabase();
     const body = await request.json();
-
     const validation = orderCreateSchema.safeParse(body);
     if (!validation.success) {
       return NextResponse.json(
@@ -173,132 +199,136 @@ export async function POST(request: Request) {
 
     if (validData.paymentMethod && validData.paymentMethod !== 'Cash on Delivery') {
       return NextResponse.json(
-        { success: false, message: 'PrimeBrew Herbis accepts Cash on Delivery (COD) only. Online payment options are disabled.' },
+        {
+          success: false,
+          message: 'PrimeBrew Herbis accepts Cash on Delivery (COD) only. Online payment options are disabled.',
+        },
         { status: 400 }
       );
     }
 
-    // Optional Customer Authentication check (supports guest & logged in users)
     const auth = verifyCustomerToken(request);
-    const userId = auth.isAuthorized && auth.user ? auth.user.userId : `guest-${Date.now()}`;
+    const userId = auth.isAuthorized && auth.user ? auth.user.userId : null;
     const customerEmail = (auth.isAuthorized && auth.user ? auth.user.email : validData.shippingAddress.email || '').trim().toLowerCase();
     const customerName = (validData.shippingAddress.fullName || (auth.isAuthorized && auth.user ? auth.user.name : '') || 'Customer').trim();
 
-    const formattedItems = validData.items.map((item: any) => {
-      const itemImg = getOrderItemImage(item);
-      return {
-        productId: String(item.productId || item.id || 'prod-unknown'),
-        productName: String(item.productName || item.name || 'Herbal Tea'),
-        productImage: itemImg,
-        image: itemImg,
-        price: Number(item.price) || 0,
-        weight: String(item.weight || '30 Tea Bags'),
-        quantity: Number(item.quantity) || 1,
-      };
-    });
-
-    const uniqueId = Date.now();
-    // Cryptographically secure order number generation
     const orderNumber = `PBH-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     const trackingNumber = `SR-${Math.floor(100000000 + Math.random() * 900000000)}`;
 
-    const orderDocData = {
-      userId,
-      orderNumber,
-      createdAt: new Date().toISOString(),
-      items: formattedItems,
-      shippingAddress: {
-        fullName: customerName,
-        phone: String(validData.shippingAddress.phone || '').trim(),
-        email: customerEmail,
-        street: String(validData.shippingAddress.street || '').trim(),
-        city: String(validData.shippingAddress.city || '').trim(),
-        state: String(validData.shippingAddress.state || '').trim(),
-        pincode: String(validData.shippingAddress.pincode || '').trim(),
-        isDefault: Boolean(validData.shippingAddress.isDefault),
-      },
-      gstInvoice: body.gstInvoice ? {
-        gstin: String(body.gstInvoice.gstin || ''),
-        companyName: String(body.gstInvoice.companyName || ''),
-      } : undefined,
-      paymentMethod: 'Cash on Delivery',
-      paymentStatus: 'Pending',
-      orderStatus: 'Processing',
-      trackingNumber,
-      courierName: 'Shiprocket Express',
-      subtotal: Number(body.subtotal) || 0,
-      discount: Number(body.discount) || 0,
-      shippingFee: Number(body.shippingFee) || 0,
-      tax: Number(body.tax) || 0,
-      total: Number(body.total) || 0,
-      estimatedDelivery: '3-5 Business Days',
+    const shippingAddressJson = {
+      fullName: customerName,
+      phone: String(validData.shippingAddress.phone || '').trim(),
+      email: customerEmail,
+      street: String(validData.shippingAddress.street || '').trim(),
+      city: String(validData.shippingAddress.city || '').trim(),
+      state: String(validData.shippingAddress.state || '').trim(),
+      pincode: String(validData.shippingAddress.pincode || '').trim(),
+      isDefault: Boolean(validData.shippingAddress.isDefault),
     };
 
-    console.log('Order creation request received at /api/orders', {
-      userId,
-      email: customerEmail,
-      itemCount: formattedItems.length,
-      hasShippingAddress: Boolean(body.shippingAddress),
-      paymentMethod: 'Cash on Delivery',
-    });
-
-    let createdOrder: any = null;
-    try {
-      console.log('Attempting OrderModel.create() in MongoDB Atlas...');
-      const doc = await OrderModel.create(orderDocData);
-      if (doc) {
-        createdOrder = doc.toObject ? doc.toObject() : doc;
-        createdOrder._id = doc._id.toString();
-        console.log('✅ Order created successfully in MongoDB Atlas primebrew.orders', {
-          orderId: createdOrder._id,
-          orderNumber: createdOrder.orderNumber,
-          userId: createdOrder.userId,
+    // Atomic transaction: verify stock, decrement stock, and create order + items
+    const createdOrder = await prisma.$transaction(async (tx) => {
+      // 1. Verify stock for all items
+      for (const item of validData.items) {
+        const itemPid = String(item.productId || (item as any).id || '');
+        const product = await tx.product.findFirst({
+          where: {
+            OR: [
+              { id: itemPid },
+              { slug: { equals: itemPid, mode: 'insensitive' } },
+            ],
+          },
         });
+
+        if (product && product.stock < item.quantity) {
+          throw new Error(`Insufficient stock for "${product.name}". Only ${product.stock} available.`);
+        }
       }
-    } catch (dbErr: any) {
-      console.error('❌ OrderModel.create() failed in MongoDB Atlas:', {
-        name: dbErr?.name,
-        message: dbErr?.message ? String(dbErr.message).replace(/\/\/[^:]+:[^@]+@/g, '//***:***@') : '',
-        code: dbErr?.code || null,
-        codeName: dbErr?.codeName || null,
-        errors: dbErr?.errors ? Object.keys(dbErr.errors) : [],
-      });
-    }
 
-    if (!createdOrder) {
-      createdOrder = { _id: `ord-${uniqueId}`, ...orderDocData };
-      inMemoryStore.orders.unshift(createdOrder);
-    } else {
-      inMemoryStore.orders.unshift(createdOrder);
-    }
+      // 2. Decrement stock for matched products
+      for (const item of validData.items) {
+        const itemPid = String(item.productId || (item as any).id || '');
+        const product = await tx.product.findFirst({
+          where: {
+            OR: [
+              { id: itemPid },
+              { slug: { equals: itemPid, mode: 'insensitive' } },
+            ],
+          },
+        });
 
-    // Persistent Admin Notification in MongoDB Atlas
-    try {
-      const notifMsg = `Order #${orderNumber} has been placed by ${customerName}. Total: ₹${orderDocData.total}`;
-      await NotificationModel.create({
-        type: 'new_order',
-        orderId: createdOrder._id,
-        orderNumber,
-        customerName,
-        total: orderDocData.total,
-        message: notifMsg,
-        read: false,
+        if (product) {
+          const newStock = Math.max(0, product.stock - item.quantity);
+          await tx.product.update({
+            where: { id: product.id },
+            data: {
+              stock: newStock,
+              inStock: newStock > 0,
+            },
+          });
+        }
+      }
+
+      // 3. Create the order
+      const order = await tx.order.create({
+        data: {
+          orderNumber,
+          userId: userId || undefined,
+          status: OrderStatus.PROCESSING,
+          paymentMethod: 'Cash on Delivery',
+          paymentStatus: 'Pending',
+          subtotal: Number(body.subtotal) || 0,
+          discount: Number(body.discount) || 0,
+          shippingFee: Number(body.shippingFee) || 0,
+          tax: Number(body.tax) || 0,
+          total: Number(body.total) || 0,
+          trackingNumber,
+          courierName: 'Shiprocket Express',
+          estimatedDelivery: '3-5 Business Days',
+          shippingAddress: shippingAddressJson,
+          giftWrap: Boolean(body.giftWrap),
+          giftMessage: body.giftMessage || null,
+          appliedCoupon: body.couponCode || null,
+          items: {
+            create: validData.items.map((it: any) => ({
+              productId: it.productId || it.id || null,
+              productName: it.productName || it.name || 'Herbal Tea',
+              productImage: getOrderItemImage(it) || it.productImage || null,
+              price: Number(it.price) || 0,
+              quantity: Number(it.quantity) || 1,
+              weight: String(it.weight || '30 Tea Bags'),
+            })),
+          },
+        },
+        include: { items: true },
       });
-    } catch (notifErr) {
-      console.warn('Notification creation fallback:', notifErr);
-    }
+
+      // 4. Create in-app notification
+      await tx.notification.create({
+        data: {
+          title: `New Order: ${order.orderNumber}`,
+          message: `Received COD order for ₹${order.total.toLocaleString('en-IN')} by ${customerName}.`,
+          type: 'order',
+          link: `/admin/orders?search=${order.orderNumber}`,
+        },
+      });
+
+      return order;
+    });
 
     return NextResponse.json({
       success: true,
-      message: 'Order created successfully',
-      order: normalizeOrder(createdOrder),
+      message: 'Order created successfully!',
+      order: formatOrderResponse(createdOrder),
     });
   } catch (error: any) {
-    console.error('Error creating order:', error);
+    console.error('Order creation error:', error);
+    const message = error.message?.includes('Insufficient stock')
+      ? error.message
+      : 'Failed to create order. Please verify your cart and try again.';
     return NextResponse.json(
-      { success: false, message: 'An unexpected error occurred while placing your order' },
-      { status: 500 }
+      { success: false, message },
+      { status: error.message?.includes('Insufficient stock') ? 400 : 500 }
     );
   }
 }
-

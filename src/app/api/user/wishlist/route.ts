@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
-import { UserModel } from '@/models/User';
+import { prisma } from '@/lib/prisma';
 import { verifyCustomerToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -12,8 +11,6 @@ export async function POST(request: Request) {
   }
 
   try {
-    await connectToDatabase();
-
     const body = await request.json();
     const { email, wishlist } = body;
 
@@ -39,33 +36,25 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
-    const cleanWishlist = Array.from(new Set(wishlist.filter((id) => typeof id === 'string' && id.trim().length > 0)));
 
-    let dbUser: any = null;
-    try {
-      dbUser = await UserModel.findOneAndUpdate(
-        { email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
-        { wishlist: cleanWishlist },
-        { new: true }
-      );
-    } catch (dbErr) {
-      console.warn('MongoDB wishlist update warning:', dbErr);
-    }
+    const cleanWishlist = Array.from(
+      new Set(wishlist.filter((id) => typeof id === 'string' && id.trim().length > 0))
+    );
 
-    const memoryUser = inMemoryStore.findUserByEmail(cleanEmail);
-    if (memoryUser) {
-      memoryUser.wishlist = cleanWishlist;
-    }
+    await prisma.user.update({
+      where: { email: cleanEmail },
+      data: { wishlist: cleanWishlist },
+    });
 
     return NextResponse.json({
       success: true,
       message: 'Wishlist updated successfully.',
       wishlist: cleanWishlist,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error updating customer wishlist:', error);
     return NextResponse.json(
-      { success: false, message: error?.message || 'Server error updating wishlist' },
+      { success: false, message: 'Server error updating wishlist' },
       { status: 500 }
     );
   }

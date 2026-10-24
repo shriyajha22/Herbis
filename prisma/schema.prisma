@@ -1,0 +1,230 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  CONFIRMED
+  PACKED
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  phone         String?
+  role          Role      @default(CUSTOMER)
+  passwordHash  String?
+  walletBalance Float     @default(250)
+  wishlist      String[]  @default([])
+  addresses     Address[]
+  orders        Order[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Address {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName     String
+  phone        String
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  postalCode   String
+  country      String   @default("India")
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String
+  iconName    String?
+  image       String?
+  itemCount   Int       @default(0)
+  featured    Boolean   @default(false)
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Product {
+  id                  String      @id @default(cuid())
+  name                String
+  slug                String      @unique
+  subtitle            String      @default("")
+  description         String
+  category            String
+  categoryName        String
+  categoryId          String?
+  categoryRel         Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  price               Float
+  mrp                 Float
+  discountPercentage  Float       @default(0)
+  rating              Float       @default(5.0)
+  reviewCount         Int         @default(0)
+  stock               Int         @default(100)
+  inStock             Boolean     @default(true)
+  isFeatured          Boolean     @default(false)
+  isBestSeller        Boolean     @default(false)
+  isNewArrival        Boolean     @default(false)
+  images              String[]    @default([])
+  weightVariants      Json?
+  ingredients         Json?
+  benefits            String[]    @default([])
+  caffeineLevel       String      @default("Naturally Caffeine-Free")
+  brewingGuide        Json?
+  nutritionInfo       Json?
+  flavorProfile       String?
+  storageInstructions String?
+  netQuantity         String?
+  keyHerbs            String[]    @default([])
+  certifications      String[]    @default([])
+  sku                 String      @default("")
+  origin              String      @default("Darjeeling High Altitude Farms")
+  orderItems          OrderItem[]
+  reviews             Review[]
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+model Review {
+  id            String   @id @default(cuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userName      String
+  userAvatar    String?
+  rating        Int      @default(5)
+  title         String
+  comment       String
+  date          String
+  verifiedBuyer Boolean  @default(true)
+  helpfulCount  Int      @default(0)
+  createdAt     DateTime @default(now())
+}
+
+model Order {
+  id                String      @id @default(cuid())
+  orderNumber       String      @unique
+  userId            String?
+  user              User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items             OrderItem[]
+  status            OrderStatus @default(PROCESSING)
+  paymentMethod     String      @default("Cash on Delivery")
+  paymentStatus     String      @default("Pending")
+  subtotal          Float
+  discount          Float       @default(0)
+  shippingFee       Float       @default(0)
+  tax               Float       @default(0)
+  total             Float
+  trackingNumber    String?
+  courierName       String?
+  estimatedDelivery String?
+  shippingAddress   Json
+  giftWrap          Boolean     @default(false)
+  giftMessage       String?
+  appliedCoupon     String?
+  cancelledAt       DateTime?
+  cancelledBy       String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+}
+
+model OrderItem {
+  id           String   @id @default(cuid())
+  orderId      String
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId    String?
+  product      Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productName  String
+  productImage String?
+  price        Float
+  quantity     Int
+  weight       String?
+}
+
+model Coupon {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  discountType   String   @default("percentage")
+  discountValue  Float
+  minOrderAmount Float    @default(0)
+  maxDiscount    Float?
+  expiryDate     String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model ContactQuery {
+  id           String    @id @default(cuid())
+  name         String
+  email        String
+  phone        String?
+  subject      String?
+  message      String
+  status       String    @default("Unread")
+  replyMessage String?
+  repliedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  adminEmail String
+  action     String
+  targetType String
+  targetId   String?
+  changes    Json?
+  createdAt  DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  title     String
+  message   String
+  type      String   @default("info")
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model ActiveSession {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  currentPage String   @default("/")
+  loginTime   DateTime @default(now())
+  lastActive  DateTime @default(now())
+  isOnline    Boolean  @default(true)
+}

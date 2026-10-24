@@ -1,6 +1,4 @@
-import { NextResponse } from 'next/server';
-import { connectToDatabase } from '@/lib/db';
-import { NotificationModel } from '@/models/Notification';
+import { prisma } from '@/lib/prisma';
 import { verifyAdminToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -22,17 +20,20 @@ export async function GET(request: Request) {
       };
 
       try {
-        await connectToDatabase();
-        const initial = await NotificationModel.find({}).sort({ createdAt: -1 }).limit(50).lean();
+        const initial = await prisma.notification.findMany({
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        });
         const unreadCount = initial.filter((n) => !n.read).length;
         sendEvent({ type: 'initial', notifications: initial, unreadCount });
       } catch (err) {}
 
-      // SSE Heartbeat interval
       const interval = setInterval(async () => {
         try {
-          await connectToDatabase();
-          const latest = await NotificationModel.find({}).sort({ createdAt: -1 }).limit(50).lean();
+          const latest = await prisma.notification.findMany({
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+          });
           const unreadCount = latest.filter((n) => !n.read).length;
           sendEvent({ type: 'update', notifications: latest, unreadCount, timestamp: Date.now() });
         } catch (e) {
@@ -40,7 +41,7 @@ export async function GET(request: Request) {
             controller.enqueue(encoder.encode(`: heartbeat\n\n`));
           } catch (err) {}
         }
-      }, 3000);
+      }, 5000);
 
       request.signal.addEventListener('abort', () => {
         clearInterval(interval);

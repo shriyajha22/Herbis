@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { connectToDatabase } from '@/lib/db';
-import { NotificationModel } from '@/models/Notification';
+import { prisma } from '@/lib/prisma';
 import { verifyAdminToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -12,12 +11,10 @@ export async function GET(request: Request) {
       return auth.errorResponse!;
     }
 
-    await connectToDatabase();
-
-    let notifications: any[] = [];
-    try {
-      notifications = await NotificationModel.find({}).sort({ createdAt: -1 }).limit(50).lean();
-    } catch (err) {}
+    const notifications = await prisma.notification.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
 
     const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -27,8 +24,9 @@ export async function GET(request: Request) {
       notifications,
     });
   } catch (error: any) {
+    console.error('Fetch notifications error:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Failed to fetch admin notifications' },
+      { success: false, message: 'Failed to fetch admin notifications' },
       { status: 500 }
     );
   }
@@ -41,17 +39,25 @@ export async function PATCH(request: Request) {
       return auth.errorResponse!;
     }
 
-    await connectToDatabase();
     const body = await request.json();
     const { notificationId, markAllRead } = body;
 
     if (markAllRead) {
-      await NotificationModel.updateMany({ read: false }, { $set: { read: true } });
+      await prisma.notification.updateMany({
+        where: { read: false },
+        data: { read: true },
+      });
     } else if (notificationId) {
-      await NotificationModel.findByIdAndUpdate(notificationId, { $set: { read: true } });
+      await prisma.notification.update({
+        where: { id: notificationId },
+        data: { read: true },
+      });
     }
 
-    const updatedNotifications = await NotificationModel.find({}).sort({ createdAt: -1 }).limit(50).lean();
+    const updatedNotifications = await prisma.notification.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
     const unreadCount = updatedNotifications.filter((n) => !n.read).length;
 
     return NextResponse.json({
@@ -61,8 +67,9 @@ export async function PATCH(request: Request) {
       notifications: updatedNotifications,
     });
   } catch (error: any) {
+    console.error('Patch notifications error:', error);
     return NextResponse.json(
-      { success: false, message: error.message || 'Failed to update notification status' },
+      { success: false, message: 'Failed to update notifications' },
       { status: 500 }
     );
   }

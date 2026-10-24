@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
-import mongoose from 'mongoose';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
-import { UserModel } from '@/models/User';
-import { PasswordResetModel } from '@/models/PasswordReset';
+import { prisma } from '@/lib/prisma';
 import { sendPasswordResetEmail } from '@/lib/mailer';
 import { passwordResetRequestSchema } from '@/lib/validators';
 import { checkForgotPasswordRateLimit, getClientIp } from '@/lib/rateLimit';
@@ -21,8 +18,6 @@ export async function POST(request: Request) {
   }
 
   try {
-    await connectToDatabase();
-
     const body = await request.json();
     const validation = passwordResetRequestSchema.safeParse(body);
     if (!validation.success) {
@@ -42,21 +37,12 @@ export async function POST(request: Request) {
         { status: 429 }
       );
     }
-    const isDbConnected = mongoose.connection.readyState === 1;
 
-    // Verify user exists in database
-    let userExists = false;
-    if (isDbConnected) {
-      const dbUser = await UserModel.findOne({ email: cleanEmail });
-      if (dbUser) userExists = true;
-    }
-    if (!userExists) {
-      userExists = inMemoryStore.users.some(
-        (u) => u.email.toLowerCase() === cleanEmail
-      );
-    }
+    const user = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+    });
 
-    if (!userExists) {
+    if (!user) {
       return NextResponse.json(
         {
           success: false,
@@ -66,29 +52,18 @@ export async function POST(request: Request) {
       );
     }
 
-    // Generate secure 32-byte token valid for 1 hour
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-    if (isDbConnected) {
-      await PasswordResetModel.create({
+    await prisma.passwordReset.create({
+      data: {
         token,
         email: cleanEmail,
         expiresAt,
         used: false,
-      });
-    }
-
-    // Store token in inMemoryStore as well
-    inMemoryStore.createPasswordResetToken(cleanEmail);
-    inMemoryStore.passwordResetTokens.set(token, {
-      token,
-      email: cleanEmail,
-      expiresAt,
-      used: false,
+      },
     });
 
-    // Send reset email via Resend API
     const mailResult = await sendPasswordResetEmail(cleanEmail, token);
 
     if (!mailResult.success) {
@@ -103,12 +78,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: `Password reset verification email sent to ${cleanEmail}. Please check your inbox.`,
+      message: 'Password reset link sent! Please check your inbox and spam folder.',
     });
-  } catch (error: any) {
-    console.error('Error handling forgot password request:', error?.message);
+  } catch (error) {
+    console.error('Forgot password error:', error);
     return NextResponse.json(
-      { success: false, message: 'Server error processing password reset request.' },
+      { success: false, message: 'An unexpected error occurred while processing your request' },
       { status: 500 }
     );
   }

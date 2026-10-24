@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
-import { UserModel } from '@/models/User';
-import { Address } from '@/lib/types';
+import { prisma } from '@/lib/prisma';
 import { verifyCustomerToken } from '@/lib/auth';
 import { addressSchema } from '@/lib/validators';
 
@@ -14,8 +12,6 @@ export async function GET(request: Request) {
   }
 
   try {
-    await connectToDatabase();
-
     const { searchParams } = new URL(request.url);
     const email = searchParams.get('email');
 
@@ -35,24 +31,18 @@ export async function GET(request: Request) {
       );
     }
 
-    let user: any = null;
-    try {
-      user = await UserModel.findOne({
-        email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
-      }).lean();
-    } catch (err) {}
+    const user = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+      include: { addresses: { orderBy: { isDefault: 'desc' } } },
+    });
 
-    if (!user) {
-      user = inMemoryStore.findUserByEmail(cleanEmail);
-    }
-
-    const addresses = user ? user.addresses || [] : [];
+    const addresses = user ? user.addresses : [];
 
     return NextResponse.json({
       success: true,
       addresses,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error fetching user addresses:', error);
     return NextResponse.json(
       { success: false, message: 'Failed to fetch addresses' },
@@ -68,10 +58,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    await connectToDatabase();
-
     const body = await request.json();
-    const { email, action, address, addresses: newAddressesArray, index } = body;
+    const { email, action, address, addressId } = body;
 
     if (!email) {
       return NextResponse.json(
@@ -89,110 +77,91 @@ export async function POST(request: Request) {
       );
     }
 
-    let user: any = null;
-    try {
-      user = await UserModel.findOne({
-        email: new RegExp(`^${cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
+    const user = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, message: 'User account not found' },
+        { status: 404 }
+      );
+    }
+
+    if (action === 'delete') {
+      if (!addressId) {
+        return NextResponse.json(
+          { success: false, message: 'addressId is required for deletion' },
+          { status: 400 }
+        );
+      }
+      await prisma.address.deleteMany({
+        where: { id: addressId, userId: user.id },
       });
-    } catch (err) {}
-
-    let memoryUser = inMemoryStore.findUserByEmail(cleanEmail);
-
-    let currentAddresses: Address[] = user?.addresses
-      ? [...user.addresses]
-      : memoryUser?.addresses
-      ? [...memoryUser.addresses]
-      : [];
-
-    if (action === 'sync' && Array.isArray(newAddressesArray)) {
-      currentAddresses = newAddressesArray;
-    } else if (action === 'add' && address) {
-      const parsed = addressSchema.safeParse(address);
-      if (!parsed.success) {
+    } else if (action === 'setDefault') {
+      if (!addressId) {
         return NextResponse.json(
-          { success: false, message: parsed.error.errors[0]?.message || 'Invalid address data' },
+          { success: false, message: 'addressId is required to set default' },
           { status: 400 }
         );
       }
-      const validAddr = parsed.data;
-      const isFirst = currentAddresses.length === 0;
-      const newAddress: Address = {
-        fullName: validAddr.fullName,
-        phone: validAddr.phone,
-        email: validAddr.email || cleanEmail,
-        street: validAddr.street,
-        city: validAddr.city,
-        state: validAddr.state,
-        pincode: validAddr.pincode,
-        isDefault: isFirst || Boolean(validAddr.isDefault),
-      };
-
-      if (newAddress.isDefault) {
-        currentAddresses = currentAddresses.map((a) => ({ ...a, isDefault: false }));
-      }
-      currentAddresses.unshift(newAddress);
-    } else if (action === 'edit' && address && typeof index === 'number' && index >= 0 && index < currentAddresses.length) {
-      const parsed = addressSchema.safeParse(address);
-      if (!parsed.success) {
+      await prisma.$transaction([
+        prisma.address.updateMany({
+          where: { userId: user.id },
+          data: { isDefault: false },
+        }),
+        prisma.address.update({
+          where: { id: addressId },
+          data: { isDefault: true },
+        }),
+      ]);
+    } else {
+      // Add or update address
+      const validation = addressSchema.safeParse(address);
+      if (!validation.success) {
         return NextResponse.json(
-          { success: false, message: parsed.error.errors[0]?.message || 'Invalid address data' },
+          { success: false, message: validation.error.errors[0]?.message || 'Invalid address data' },
           { status: 400 }
         );
       }
-      const validAddr = parsed.data;
-      const updatedAddress: Address = {
-        fullName: validAddr.fullName,
-        phone: validAddr.phone,
-        email: validAddr.email || currentAddresses[index].email,
-        street: validAddr.street,
-        city: validAddr.city,
-        state: validAddr.state,
-        pincode: validAddr.pincode,
-        isDefault: Boolean(validAddr.isDefault),
-      };
+      const data = validation.data;
 
-      if (updatedAddress.isDefault) {
-        currentAddresses = currentAddresses.map((a) => ({ ...a, isDefault: false }));
+      if (data.isDefault) {
+        await prisma.address.updateMany({
+          where: { userId: user.id },
+          data: { isDefault: false },
+        });
       }
-      currentAddresses[index] = updatedAddress;
 
-      // Ensure at least one default address exists
-      if (!currentAddresses.some((a) => a.isDefault) && currentAddresses.length > 0) {
-        currentAddresses[0].isDefault = true;
-      }
-    } else if (action === 'delete' && typeof index === 'number' && index >= 0 && index < currentAddresses.length) {
-      const wasDefault = currentAddresses[index].isDefault;
-      currentAddresses.splice(index, 1);
-      if (wasDefault && currentAddresses.length > 0) {
-        currentAddresses[0].isDefault = true;
-      }
-    } else if (action === 'setDefault' && typeof index === 'number' && index >= 0 && index < currentAddresses.length) {
-      currentAddresses = currentAddresses.map((a, i) => ({
-        ...a,
-        isDefault: i === index,
-      }));
+      await prisma.address.create({
+        data: {
+          userId: user.id,
+          fullName: data.fullName,
+          phone: data.phone,
+          addressLine1: data.street,
+          city: data.city,
+          state: data.state,
+          postalCode: data.pincode,
+          country: 'India',
+          isDefault: Boolean(data.isDefault),
+        },
+      });
     }
 
-    // Save to MongoDB if UserModel exists
-    if (user) {
-      user.addresses = currentAddresses;
-      await user.save();
-    }
-
-    // Save to inMemoryStore
-    if (memoryUser) {
-      memoryUser.addresses = currentAddresses;
-    }
+    const updatedAddresses = await prisma.address.findMany({
+      where: { userId: user.id },
+      orderBy: { isDefault: 'desc' },
+    });
 
     return NextResponse.json({
       success: true,
-      message: 'Delivery addresses updated successfully.',
-      addresses: currentAddresses,
+      message: 'Address saved successfully',
+      addresses: updatedAddresses,
     });
-  } catch (error: any) {
-    console.error('Error updating user addresses:', error);
+  } catch (error) {
+    console.error('Error modifying user addresses:', error);
     return NextResponse.json(
-      { success: false, message: 'An unexpected error occurred while updating addresses' },
+      { success: false, message: 'An unexpected error occurred while modifying addresses' },
       { status: 500 }
     );
   }

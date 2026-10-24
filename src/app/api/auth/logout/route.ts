@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
-import { inMemoryStore, connectToDatabase } from '@/lib/db';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,10 +8,9 @@ const JWT_SECRET = process.env.JWT_SECRET!;
 if (!JWT_SECRET) throw new Error('JWT_SECRET is not configured');
 
 export async function POST(request: Request) {
-  await connectToDatabase();
-
   try {
-    const token = request.headers.get('cookie')
+    const token = request.headers
+      .get('cookie')
       ?.split(';')
       .find((c) => c.trim().startsWith('pbh_token='))
       ?.split('=')[1];
@@ -20,7 +19,10 @@ export async function POST(request: Request) {
       try {
         const decoded = jwt.verify(token, JWT_SECRET) as any;
         if (decoded && decoded.email) {
-          inMemoryStore.setUserOffline(decoded.email);
+          await prisma.activeSession.updateMany({
+            where: { email: decoded.email.trim().toLowerCase() },
+            data: { isOnline: false },
+          });
         }
       } catch (e) {
         // Token invalid or expired
@@ -32,7 +34,6 @@ export async function POST(request: Request) {
       message: 'Logged out successfully',
     });
 
-    // Clear HTTP-only session cookies for both customer and admin
     response.cookies.set('pbh_token', '', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -50,8 +51,9 @@ export async function POST(request: Request) {
 
     return response;
   } catch (error) {
+    console.error('Logout error:', error);
     return NextResponse.json(
-      { success: false, message: 'Logout failed' },
+      { success: false, message: 'An unexpected error occurred during logout' },
       { status: 500 }
     );
   }
