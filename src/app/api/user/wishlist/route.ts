@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
 import { inMemoryStore, connectToDatabase } from '@/lib/db';
 import { UserModel } from '@/models/User';
+import { verifyCustomerToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
+  const auth = verifyCustomerToken(request);
+  if (!auth.isAuthorized) {
+    return auth.errorResponse || NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     await connectToDatabase();
 
@@ -26,6 +32,13 @@ export async function POST(request: Request) {
     }
 
     const cleanEmail = email.trim().toLowerCase();
+
+    if (auth.user?.role !== 'admin' && auth.user?.email.toLowerCase() !== cleanEmail) {
+      return NextResponse.json(
+        { success: false, message: 'Access denied: You cannot modify wishlist for another user.' },
+        { status: 403 }
+      );
+    }
     const cleanWishlist = Array.from(new Set(wishlist.filter((id) => typeof id === 'string' && id.trim().length > 0)));
 
     let dbUser: any = null;

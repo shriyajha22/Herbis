@@ -11,8 +11,6 @@ import { NotificationModel } from '@/models/Notification';
 
 export const dynamic = 'force-dynamic';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'pbh_super_secret_jwt_key_2026_primebrew';
-
 const normalizeOrder = (order: any) => {
   if (!order) return order;
   const items = (order.items || []).map((it: any) => {

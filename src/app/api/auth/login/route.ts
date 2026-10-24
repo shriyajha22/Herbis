@@ -7,7 +7,8 @@ import { UserModel } from '@/models/User';
 
 export const dynamic = 'force-dynamic';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'pbh_super_secret_jwt_key_2026_primebrew';
+const JWT_SECRET = process.env.JWT_SECRET!;
+if (!JWT_SECRET) throw new Error('JWT_SECRET is not configured');
 
 export async function POST(request: Request) {
   try {
@@ -44,13 +45,14 @@ export async function POST(request: Request) {
     }
 
     // Password comparison logic
-    let isPasswordValid = false;
-    if (user.passwordHash) {
-      isPasswordValid = await bcrypt.compare(password, user.passwordHash);
-    } else {
-      // Legacy or demo fallback
-      isPasswordValid = true;
+    if (!user.passwordHash) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid email or password' },
+        { status: 401 }
+      );
     }
+
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
 
     if (!isPasswordValid) {
       return NextResponse.json(
@@ -75,13 +77,12 @@ export async function POST(request: Request) {
       success: true,
       message: 'Login successful',
       user: safeUser,
-      token,
     });
 
     response.cookies.set('pbh_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60,
       path: '/',
     });

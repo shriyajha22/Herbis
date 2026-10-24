@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import { inMemoryStore } from '@/lib/db';
+import { verifyAdminToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = verifyAdminToken(request);
+  if (!auth.isAuthorized) {
+    return auth.errorResponse || NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     return NextResponse.json({
       success: true,
@@ -56,6 +62,11 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const auth = verifyAdminToken(request);
+  if (!auth.isAuthorized) {
+    return auth.errorResponse || NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const body = await request.json();
     const { id, status } = body;
@@ -78,6 +89,11 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = verifyAdminToken(request);
+  if (!auth.isAuthorized) {
+    return auth.errorResponse || NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');

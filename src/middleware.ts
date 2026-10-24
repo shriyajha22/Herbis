@@ -1,31 +1,25 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { jwtVerify } from 'jose';
 
-function parseJwtRole(token: string): string | null {
+async function verifyJwtRole(token: string): Promise<string | null> {
   try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const base64Url = parts[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    );
-    const decoded = JSON.parse(jsonPayload);
-    return decoded?.role || null;
+    const secret = process.env.JWT_SECRET;
+    if (!secret) return null;
+    const secretKey = new TextEncoder().encode(secret);
+    const { payload } = await jwtVerify(token, secretKey);
+    return (payload?.role as string) || null;
   } catch (e) {
     return null;
   }
 }
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Extract session tokens
   const adminToken = request.cookies.get('pbh_admin_token')?.value || request.cookies.get('pbh_token')?.value;
-  const userRole = adminToken ? parseJwtRole(adminToken) : null;
+  const userRole = adminToken ? await verifyJwtRole(adminToken) : null;
 
   // 1. STRICT ADMIN ROLE ENFORCEMENT:
   // An authenticated admin (role === 'admin') is strictly restricted to /admin routes.

@@ -6,7 +6,8 @@ import { UserModel } from '@/models/User';
 
 export const dynamic = 'force-dynamic';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'pbh_super_secret_jwt_key_2026_primebrew';
+const JWT_SECRET = process.env.JWT_SECRET!;
+if (!JWT_SECRET) throw new Error('JWT_SECRET is not configured');
 
 export async function GET(request: Request) {
   await connectToDatabase();

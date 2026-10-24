@@ -10,10 +10,11 @@ export const dynamic = 'force-dynamic';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'Contact.primebrew@gmail.com').trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
-const JWT_SECRET = process.env.JWT_SECRET || 'pbh_super_secret_jwt_key_2026_primebrew';
+const JWT_SECRET = process.env.JWT_SECRET!;
+if (!JWT_SECRET) throw new Error('JWT_SECRET is not configured');
 
 // Ensure the admin user account exists in MongoDB Atlas with a valid bcrypt hash
-async function ensureAdminInDatabase(cleanEmail: string, rawPasswordSubmitted: string) {
+async function ensureAdminInDatabase(cleanEmail: string) {
   if (mongoose.connection.readyState !== 1) return null;
 
   try {
@@ -25,10 +26,16 @@ async function ensureAdminInDatabase(cleanEmail: string, rawPasswordSubmitted: s
       ],
     });
 
-    const activePassword = ADMIN_PASSWORD || rawPasswordSubmitted;
-    const passwordHash = await bcrypt.hash(activePassword, 10);
+    let passwordHash = ADMIN_PASSWORD_HASH;
+    if (!passwordHash && ADMIN_PASSWORD) {
+      passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
+    }
 
     if (!adminUser) {
+      if (!passwordHash) {
+        console.warn('⚠️ Admin account cannot be seeded: neither ADMIN_PASSWORD nor ADMIN_PASSWORD_HASH is set.');
+        return null;
+      }
       // Seed missing admin user record in MongoDB Atlas
       adminUser = await UserModel.create({
         _id: 'usr-admin',
@@ -56,7 +63,7 @@ async function ensureAdminInDatabase(cleanEmail: string, rawPasswordSubmitted: s
         if (!matchesEnv) {
           adminUser.passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
         }
-      } else if (!adminUser.passwordHash) {
+      } else if (!adminUser.passwordHash && passwordHash) {
         adminUser.passwordHash = passwordHash;
       }
 
@@ -92,7 +99,7 @@ export async function POST(request: Request) {
     // 1. Verify DB Connection status & ensure Admin Account exists in MongoDB Atlas
     let dbAdmin: any = null;
     if (isDbConnected) {
-      dbAdmin = await ensureAdminInDatabase(cleanEmail, password);
+      dbAdmin = await ensureAdminInDatabase(cleanEmail);
     }
 
     // 2. Validate email match (case-insensitive & trimmed)
@@ -130,14 +137,6 @@ export async function POST(request: Request) {
       }
     }
 
-    // 6. If no env password is set and DB admin hash exists, allow rawPassword matching during initial seed setup
-    if (!isPasswordValid && !ADMIN_PASSWORD && !ADMIN_PASSWORD_HASH && dbAdmin && dbAdmin.passwordHash) {
-      const matchSeeded = await bcrypt.compare(password, dbAdmin.passwordHash);
-      if (matchSeeded) {
-        isPasswordValid = true;
-      }
-    }
-
     if (!isPasswordValid) {
       return NextResponse.json(
         { success: false, message: 'Invalid email or password' },
@@ -166,14 +165,13 @@ export async function POST(request: Request) {
       success: true,
       message: 'Admin authentication successful',
       user: adminUser,
-      token,
     });
 
     // Set HTTP-only admin session cookies
     response.cookies.set('pbh_admin_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60,
       path: '/',
     });
@@ -181,7 +179,7 @@ export async function POST(request: Request) {
     response.cookies.set('pbh_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60,
       path: '/',
     });

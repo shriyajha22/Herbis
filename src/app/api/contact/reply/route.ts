@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { inMemoryStore } from '@/lib/db';
+import { verifyAdminToken } from '@/lib/auth';
 
 export async function POST(request: Request) {
+  const auth = verifyAdminToken(request);
+  if (!auth.isAuthorized) {
+    return auth.errorResponse || NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const { queryId, customerEmail, customerName, subject, replyMessage } = await request.json();
 

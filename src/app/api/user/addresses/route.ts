@@ -2,10 +2,16 @@ import { NextResponse } from 'next/server';
 import { inMemoryStore, connectToDatabase } from '@/lib/db';
 import { UserModel } from '@/models/User';
 import { Address } from '@/lib/types';
+import { verifyCustomerToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
+  const auth = verifyCustomerToken(request);
+  if (!auth.isAuthorized) {
+    return auth.errorResponse || NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     await connectToDatabase();
 
@@ -20,6 +26,13 @@ export async function GET(request: Request) {
     }
 
     const cleanEmail = email.trim().toLowerCase();
+
+    if (auth.user?.role !== 'admin' && auth.user?.email.toLowerCase() !== cleanEmail) {
+      return NextResponse.json(
+        { success: false, message: 'Access denied: You cannot view addresses for another user.' },
+        { status: 403 }
+      );
+    }
 
     let user: any = null;
     try {
@@ -48,6 +61,11 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = verifyCustomerToken(request);
+  if (!auth.isAuthorized) {
+    return auth.errorResponse || NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     await connectToDatabase();
 
@@ -62,6 +80,13 @@ export async function POST(request: Request) {
     }
 
     const cleanEmail = email.trim().toLowerCase();
+
+    if (auth.user?.role !== 'admin' && auth.user?.email.toLowerCase() !== cleanEmail) {
+      return NextResponse.json(
+        { success: false, message: 'Access denied: You cannot modify addresses for another user.' },
+        { status: 403 }
+      );
+    }
 
     let user: any = null;
     try {

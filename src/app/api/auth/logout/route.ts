@@ -4,7 +4,8 @@ import { inMemoryStore, connectToDatabase } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'pbh_super_secret_jwt_key_2026_primebrew';
+const JWT_SECRET = process.env.JWT_SECRET!;
+if (!JWT_SECRET) throw new Error('JWT_SECRET is not configured');
 
 export async function POST(request: Request) {
   await connectToDatabase();
@@ -35,14 +36,14 @@ export async function POST(request: Request) {
     response.cookies.set('pbh_token', '', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'strict',
       expires: new Date(0),
       path: '/',
     });
     response.cookies.set('pbh_admin_token', '', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'strict',
       expires: new Date(0),
       path: '/',
     });
