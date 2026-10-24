@@ -1,0 +1,59 @@
+name: Build, Test & Deploy to Production
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+
+jobs:
+  test:
+    name: Run Tests & Type Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/primebrew_test?schema=public"
+
+      - name: Verify TypeScript
+        run: npx tsc --noEmit
+
+      - name: Execute Vitest Suite
+        run: npm test
+
+  deploy:
+    name: Deploy to Cloud VM
+    needs: test
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER || 'ubuntu' }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd ~/primebrew-herbis
+            git pull origin ${{ github.ref_name }}
+            docker compose down
+            docker compose up -d --build
+            docker compose exec -T app npx prisma migrate deploy
+            echo "🚀 PrimeBrew Herbis deployment completed successfully!"
