@@ -28,8 +28,20 @@ function DashboardContent() {
   const [activeTab, setActiveTab] = useState<'orders' | 'wishlist' | 'addresses' | 'wallet' | 'settings'>(initialTab);
   const [customerOrders, setCustomerOrders] = useState<any[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [availableProducts, setAvailableProducts] = useState(initialProducts);
   const [passCurrent, setPassCurrent] = useState('');
   const [passNew, setPassNew] = useState('');
+
+  React.useEffect(() => {
+    fetch('/api/products')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.products) && data.products.length > 0) {
+          setAvailableProducts(data.products);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Address Management State
   const [showAddressModal, setShowAddressModal] = useState(false);
@@ -233,7 +245,7 @@ function DashboardContent() {
     }
   };
 
-  const wishlistedProducts = initialProducts.filter((p) => wishlist.includes(p._id));
+  const wishlistedProducts = availableProducts.filter((p) => wishlist.includes(p._id));
 
   const handlePasswordChange = (e: React.FormEvent) => {
     e.preventDefault();

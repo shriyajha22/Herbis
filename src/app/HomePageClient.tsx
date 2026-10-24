@@ -8,7 +8,14 @@ import FarmToCupStory from '@/components/home/FarmToCupStory';
 import BenefitsSection from '@/components/home/BenefitsSection';
 import ProductCard from '@/components/shop/ProductCard';
 import { initialCategories, initialProducts, initialBlogs } from '@/lib/seedData';
+import { Product } from '@/lib/types';
 import { ArrowRight, Star, ShieldCheck, Package, Truck, Leaf, Sparkles, Heart, Instagram } from 'lucide-react';
+
+interface HomePageClientProps {
+  products?: Product[];
+  categories?: typeof initialCategories;
+  blogs?: typeof initialBlogs;
+}
 
 const instagramPosts = [
   {
@@ -55,10 +62,14 @@ const instagramPosts = [
   }
 ];
 
-export default function HomePage() {
+export default function HomePage({
+  products = initialProducts,
+  categories = initialCategories,
+  blogs = initialBlogs,
+}: HomePageClientProps) {
   const [activeTab, setActiveTab] = useState<'all' | 'blue' | 'wellness'>('all');
 
-  const displayedProducts = initialProducts.filter((p) => {
+  const displayedProducts = products.filter((p) => {
     if (activeTab === 'blue') return p.category === 'blue-tea';
     if (activeTab === 'wellness') return p.category === 'wellness-tea' || p.category === 'ayurvedic-tea';
     return true;

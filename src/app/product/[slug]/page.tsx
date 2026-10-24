@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { initialProducts } from '@/lib/seedData';
+import { getProductBySlug, getRelatedProducts } from '@/lib/products';
 import { createPageMetadata, seoEntries } from '@/lib/seo';
 import ProductDetailClient from './ProductDetailClient';
 
@@ -8,19 +8,9 @@ interface ProductPageProps {
   params: Promise<{ slug: string }>;
 }
 
-function findProduct(slug: string) {
-  return initialProducts.find(
-    (product) =>
-      product.slug === slug ||
-      product._id === slug ||
-      (slug === 'pre-diabetic-tea' && product._id === 'prod-4') ||
-      (slug === 'ayur-tea' && product._id === 'prod-5')
-  );
-}
-
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const product = findProduct(slug);
+  const product = await getProductBySlug(slug);
   if (!product) notFound();
 
   const path = `/product/${product.slug}`;
@@ -35,6 +25,10 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
 
 export default async function ProductPage({ params }: ProductPageProps) {
   const { slug } = await params;
-  if (!findProduct(slug)) notFound();
-  return <ProductDetailClient params={{ slug }} />;
+  const product = await getProductBySlug(slug);
+  if (!product) notFound();
+
+  const relatedProducts = await getRelatedProducts(product._id, product.category);
+
+  return <ProductDetailClient product={product} relatedProducts={relatedProducts} />;
 }

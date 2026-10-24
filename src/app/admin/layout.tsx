@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import { AdminLayoutShell } from '@/components/admin/AdminLayoutShell';
 
 export const metadata: Metadata = {
   title: 'Admin Control Panel | PrimeBrew Herbis',
@@ -14,5 +15,5 @@ export const metadata: Metadata = {
 };
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+  return <AdminLayoutShell>{children}</AdminLayoutShell>;
 }

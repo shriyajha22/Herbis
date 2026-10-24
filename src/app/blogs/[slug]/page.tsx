@@ -1,23 +1,50 @@
-'use client';
-
 import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { initialBlogs } from '@/lib/seedData';
-import { ChevronRight, Calendar, Clock, User, Share2, Tag, ArrowLeft } from 'lucide-react';
+import { Clock, Tag, ArrowLeft } from 'lucide-react';
 
-export default function BlogDetailPage({ params }: { params: { slug: string } }) {
-  const blog = initialBlogs.find((b) => b.slug === params.slug || b._id === params.slug);
+interface BlogDetailPageProps {
+  params: Promise<{ slug: string }>;
+}
+
+export async function generateStaticParams() {
+  return initialBlogs.map((b) => ({ slug: b.slug }));
+}
+
+export async function generateMetadata({ params }: BlogDetailPageProps): Promise<Metadata> {
+  const { slug } = await params;
+  const blog = initialBlogs.find((b) => b.slug === slug || b._id === slug);
+  if (!blog) notFound();
+
+  return {
+    title: `${blog.title} | PrimeBrew Herbis Journal`,
+    description: blog.excerpt,
+    openGraph: {
+      title: blog.title,
+      description: blog.excerpt,
+      images: [blog.coverImage],
+    },
+  };
+}
+
+export default async function BlogDetailPage({ params }: BlogDetailPageProps) {
+  const { slug } = await params;
+  const blog = initialBlogs.find((b) => b.slug === slug || b._id === slug);
 
   if (!blog) {
-    return notFound();
+    notFound();
   }
 
   return (
     <div className="py-16 bg-brand-cream min-h-screen">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
-        <Link href="/blogs" className="inline-flex items-center gap-2 text-xs font-bold text-brand-green hover:underline">
+        <Link
+          href="/blogs"
+          className="inline-flex items-center gap-2 text-xs font-bold text-brand-green hover:underline"
+        >
           <ArrowLeft className="w-4 h-4" /> Back to Journal & Recipes
         </Link>
 
@@ -37,11 +64,19 @@ export default function BlogDetailPage({ params }: { params: { slug: string } })
           </div>
 
           <div className="relative aspect-video rounded-image overflow-hidden bg-brand-beige">
-            <Image src={blog.coverImage} alt={blog.title} fill priority className="object-cover" />
+            <Image
+              src={blog.coverImage}
+              alt={blog.title}
+              fill
+              priority
+              className="object-cover"
+            />
           </div>
 
           <div className="prose prose-slate max-w-none text-xs sm:text-sm text-gray-700 leading-relaxed space-y-4">
-            <p className="font-semibold text-brand-darkGreen text-base leading-relaxed">{blog.excerpt}</p>
+            <p className="font-semibold text-brand-darkGreen text-base leading-relaxed">
+              {blog.excerpt}
+            </p>
             <div className="whitespace-pre-line font-light text-gray-600">{blog.content}</div>
           </div>
 

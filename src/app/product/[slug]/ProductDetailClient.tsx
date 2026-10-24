@@ -3,38 +3,29 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 import ProductCard from '@/components/shop/ProductCard';
 import BrewingGuideModal from '@/components/shop/BrewingGuideModal';
-import { initialProducts } from '@/lib/seedData';
+import { Product } from '@/lib/types';
 import { useStore } from '@/lib/storeContext';
 import { Heart, ShoppingBag, Timer, ShieldCheck, Truck, RefreshCw, CheckCircle2, ChevronRight, Share2, Sparkles, Leaf, Moon, Activity, Coffee, Shield, Check, Flower2, Sparkle } from 'lucide-react';
 
-export default function ProductDetailPage({ params }: { params: { slug: string } }) {
-  const { slug } = params;
-  const product = initialProducts.find(
-    (p) =>
-      p.slug === slug ||
-      p._id === slug ||
-      (slug === 'pre-diabetic-tea' && p._id === 'prod-4') ||
-      (slug === 'ayur-tea' && p._id === 'prod-5')
-  );
+export default function ProductDetailPage({
+  product,
+  relatedProducts = [],
+}: {
+  product: Product;
+  relatedProducts?: Product[];
+}) {
   const { addToCart, toggleWishlist, isInWishlist, showToast } = useStore();
   const [selectedWeight, setSelectedWeight] = useState(product?.weightVariants?.[0]?.weight || "30 Tea Bags");
   const [quantity, setQuantity] = useState(1);
   const [activeTab, setActiveTab] = useState<'ingredients' | 'benefits' | 'brewing' | 'nutrition'>('ingredients');
   const [showBrewingGuide, setShowBrewingGuide] = useState(false);
 
-  if (!product) {
-    return notFound();
-  }
-
   const selectedVariant = product.weightVariants?.find((v) => v.weight === selectedWeight);
   const currentPrice = selectedVariant ? selectedVariant.price : product.price;
   const currentMrp = selectedVariant ? selectedVariant.mrp : product.mrp;
   const isWishlisted = isInWishlist(product._id);
-
-  const relatedProducts = initialProducts.filter((p) => p._id !== product._id).slice(0, 4);
 
   const handleShare = () => {
     if (navigator.clipboard) {

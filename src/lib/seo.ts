@@ -28,26 +28,42 @@ export const seoEntries: Record<string, SeoEntry> = {
     description: 'A traditional Ayurvedic Kashayam blended with ginger, cinnamon and warming spices to support digestion and immunity. Order this authentic brew online.',
     keywords: ['buy ayurvedic kashayam online', 'ayurvedic wellness tea', 'best ayurvedic kashayam', 'natural ayurvedic kashayam online', 'traditional ayurvedic kashayam India', 'premium ayurvedic kashayam online'],
   },
+  '/shop': {
+    title: 'Shop Premium Herbal & Ayurvedic Teas | PrimeBrew Herbis',
+    description: 'Explore our farm-fresh collection of caffeine-free Blue Tea, Ayurvedic Kashayam, and wellness infusions. 100% natural and organically sourced.',
+    keywords: ['buy herbal tea online', 'shop blue tea', 'ayurvedic tea shop', 'caffeine free teas', 'herbal tea collection'],
+  },
+  '/blogs': {
+    title: 'Herbal Wellness Journal & Tea Recipes | PrimeBrew Herbis',
+    description: 'Read the latest insights on herbal healing, Butterfly Pea benefits, mindful tea rituals, and daily Ayurvedic wellness recipes.',
+    keywords: ['herbal tea recipes', 'blue tea benefits', 'ayurvedic tea rituals', 'wellness blog', 'herbal healing articles'],
+  },
 };
 
-export function createPageMetadata(path: string, entry: SeoEntry, image = '/images/logo_opaque.png'): Metadata {
+export function createPageMetadata(path: string, entry?: SeoEntry, image = '/images/logo_opaque.png'): Metadata {
+  const safeEntry: SeoEntry = entry || {
+    title: 'PrimeBrew Herbis | Pure Herbal & Ayurvedic Teas',
+    description: 'Shop 100% pure, caffeine-free herbal and Ayurvedic infusions sourced directly from our pristine farms.',
+    keywords: ['herbal tea', 'ayurvedic tea', 'primebrew herbis', 'organic tea'],
+  };
+
   return {
-    title: { absolute: entry.title },
-    description: entry.description,
-    keywords: entry.keywords,
+    title: { absolute: safeEntry.title },
+    description: safeEntry.description,
+    keywords: safeEntry.keywords,
     alternates: { canonical: path },
     openGraph: {
-      title: entry.title,
-      description: entry.description,
+      title: safeEntry.title,
+      description: safeEntry.description,
       url: path,
       siteName: 'PrimeBrew Herbis',
       type: 'website',
-      images: [{ url: image, alt: entry.title }],
+      images: [{ url: image, alt: safeEntry.title }],
     },
     twitter: {
       card: 'summary_large_image',
-      title: entry.title,
-      description: entry.description,
+      title: safeEntry.title,
+      description: safeEntry.description,
       images: [image],
     },
   };
