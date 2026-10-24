@@ -1,0 +1,226 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+:root {
+  --font-poppins: 'Poppins', sans-serif;
+  --font-inter: 'Inter', sans-serif;
+  --font-jetbrains: 'JetBrains Mono', monospace;
+
+  /* Calming Blue Palette */
+  --color-primary: #5F86A8;        /* Primary Dusty Blue */
+  --color-secondary: #8CB8D9;      /* Secondary Sky Blue */
+  --color-accent: #B4D3EC;         /* Light Sky Blue */
+  --color-dark-green: #3E5C76;     /* Deep Dusty Blue */
+
+  /* Background Beige (Preserved Warm Beige) */
+  --color-bg-beige: #F5EFE6;       /* Main warm soft beige */
+  --color-bg-soft: #FAF6EE;        /* Soft natural cream shade */
+  --color-card-beige: #FAF6EE;     /* Warm off-white card */
+
+  /* Text Colors */
+  --color-dark-grey: #2B3746;      /* Dark navy charcoal */
+  --color-medium-grey: #556475;    /* Medium blue-grey */
+
+  /* Action Buttons */
+  --color-increase: #5F86A8;       /* Primary Dusty Blue */
+  --color-decrease: #E69C45;       /* Warm orange */
+  --color-remove: rgb(215, 65, 65);/* Muted red */
+
+  --color-gold: #D4AF37;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-inter);
+  background-color: #F5EFE6;
+  color: #2B3746;
+  font-size: 1rem; /* 16px default body */
+  line-height: 1.65; /* Balanced whitespace */
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-poppins);
+  color: #2B3746;
+  letter-spacing: -0.015em;
+}
+
+/* Global Micro-Interactions & Tactile Button / Link Feedback */
+button, 
+a, 
+input[type="button"], 
+input[type="submit"] {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button:active, 
+a:active, 
+.btn-press:active {
+  transform: scale(0.96) translateY(1px) !important;
+  opacity: 0.92;
+}
+
+/* Focused Ring Styling for Accessibility */
+button:focus-visible, 
+a:focus-visible, 
+input:focus-visible, 
+select:focus-visible, 
+textarea:focus-visible {
+  outline: 2px solid #5F86A8;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(95, 134, 168, 0.25);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #F5EFE6;
+}
+::-webkit-scrollbar-thumb {
+  background: #8CB8D9;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #5F86A8;
+}
+
+/* Glassmorphism Navbar (Warm Soft Beige blur + transparent) */
+.glass-navbar {
+  background: rgba(245, 239, 230, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(140, 184, 217, 0.35);
+}
+
+.glass-panel {
+  background: rgba(250, 246, 238, 0.94);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(140, 184, 217, 0.3);
+}
+
+.glass-dark {
+  background: rgba(43, 68, 95, 0.94);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Button Gradients */
+.btn-primary-gradient {
+  background: linear-gradient(270deg, #B4D3EC, #8CB8D9, #5F86A8);
+  color: #FFFFFF;
+  font-weight: 600;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 15px rgba(95, 134, 168, 0.25);
+}
+
+.btn-primary-gradient:hover {
+  background: linear-gradient(270deg, #8CB8D9, #5F86A8, #3E5C76);
+  box-shadow: 0 6px 20px rgba(62, 92, 118, 0.3);
+  transform: translateY(-2px);
+}
+
+/* Action Buttons */
+.btn-action-increase {
+  background-color: #5F86A8;
+  color: #FFFFFF;
+  transition: all 0.2s ease;
+}
+.btn-action-increase:hover {
+  background-color: #3E5C76;
+  transform: scale(1.08);
+}
+
+.btn-action-decrease {
+  background-color: #E69C45;
+  color: #FFFFFF;
+  transition: all 0.2s ease;
+}
+.btn-action-decrease:hover {
+  background-color: #D4872D;
+  transform: scale(1.08);
+}
+
+.btn-action-remove {
+  color: rgb(215, 65, 65);
+  transition: all 0.2s ease;
+}
+.btn-action-remove:hover {
+  background-color: rgba(215, 65, 65, 0.1);
+  color: rgb(185, 45, 45);
+}
+
+/* Soft Shadows */
+.soft-card-shadow {
+  box-shadow: 0 6px 24px -4px rgba(62, 92, 118, 0.10), 0 2px 8px -2px rgba(0, 0, 0, 0.03);
+}
+
+/* Gold Accent Gradient */
+.gold-gradient {
+  background: linear-gradient(135deg, #D4AF37 0%, #F3E5AB 50%, #AA7C11 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.green-gradient,
+.blue-gradient {
+  background: linear-gradient(270deg, #B4D3EC 0%, #8CB8D9 50%, #5F86A8 100%);
+}
+
+.green-gradient-text,
+.blue-gradient-text {
+  background: linear-gradient(270deg, #8CB8D9 0%, #5F86A8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Interactive Card Elevate */
+.interactive-card {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.interactive-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 30px -8px rgba(95, 134, 168, 0.25);
+}
+
+/* Pulse animation for live badge */
+@keyframes softPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.75; transform: scale(1.04); }
+}
+
+.animate-soft-pulse {
+  animation: softPulse 3s infinite ease-in-out;
+}
+
+/* Mobile Responsiveness Utilities (320px, 375px, 390px, 414px, 768px, 1024px, 1440px) */
+.mobile-scroll-table {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  input, select, textarea {
+    font-size: 16px !important; /* Prevents auto-zoom on iOS Safari */
+  }
+}
