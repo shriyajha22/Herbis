@@ -9,7 +9,7 @@ export const registerSchema = z.object({
     .trim()
     .optional()
     .refine(
-      (val) => !val || /^[6-9]\d{9}$/.test(val.replace(/[\s-]/g, '')),
+      (val) => !val || /^[6-9]\d{9}$/.test(val.replace(/[\s-]/g, '').replace(/^\+91/, '')),
       'Phone number must be a valid 10-digit Indian mobile number'
     ),
 });
