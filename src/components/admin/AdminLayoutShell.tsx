@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   XCircle,
+  ExternalLink,
 } from 'lucide-react';
 
 export function AdminLayoutShell({ children }: { children: React.ReactNode }) {
@@ -209,6 +210,17 @@ export function AdminLayoutShell({ children }: { children: React.ReactNode }) {
                 </Link>
               );
             })}
+
+            <div className="pt-2 border-t border-white/10">
+              <Link
+                href="/"
+                onClick={() => setSidebarOpen(false)}
+                className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-button text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+              >
+                <ExternalLink className="w-4 h-4 text-brand-gold" />
+                <span>View Storefront</span>
+              </Link>
+            </div>
           </nav>
         </div>
 
@@ -256,6 +268,15 @@ export function AdminLayoutShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-3">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-button text-xs font-bold text-brand-darkGreen bg-brand-cream border border-brand-mint/40 hover:bg-brand-mint/30 transition-colors shadow-sm"
+              title="Browse customer storefront"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-brand-green" />
+              <span className="hidden sm:inline">Storefront</span>
+            </Link>
+
             {isLiveConnected && (
               <span className="hidden sm:inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full text-[10px] font-extrabold">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />

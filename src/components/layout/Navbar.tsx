@@ -164,6 +164,15 @@ export default function Navbar() {
                             </span>
                           )}
                         </div>
+                        {currentUser.role === 'admin' && (
+                          <Link
+                            href="/admin/dashboard"
+                            onClick={() => setUserDropdownOpen(false)}
+                            className="block px-4 py-2 text-sm font-bold text-brand-green hover:bg-brand-mint/20 border-b border-gray-100"
+                          >
+                            ⚙️ Admin Control Panel
+                          </Link>
+                        )}
                         <Link
                           href="/dashboard"
                           onClick={() => setUserDropdownOpen(false)}

@@ -18,36 +18,46 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Extract session tokens
-  const adminToken = request.cookies.get('pbh_admin_token')?.value || request.cookies.get('pbh_token')?.value;
-  const userRole = adminToken ? await verifyJwtRole(adminToken) : null;
+  const adminToken = request.cookies.get('pbh_admin_token')?.value;
+  const customerToken = request.cookies.get('pbh_token')?.value;
 
-  // 1. STRICT ADMIN ROLE ENFORCEMENT:
-  // An authenticated admin (role === 'admin') is strictly restricted to /admin routes.
-  // If an admin attempts to access any customer route (or /admin/login), redirect back to /admin immediately.
-  if (userRole === 'admin') {
-    if (pathname === '/admin/login' || (!pathname.startsWith('/admin') && !pathname.startsWith('/api/'))) {
-      const adminDashboardUrl = new URL('/admin', request.url);
-      return NextResponse.redirect(adminDashboardUrl);
+  const adminRole = adminToken ? await verifyJwtRole(adminToken) : null;
+  const customerRole = customerToken ? await verifyJwtRole(customerToken) : null;
+  const isAdmin = adminRole === 'admin' || customerRole === 'admin';
+
+  // 1. ADMIN ROUTE PROTECTION
+  if (pathname.startsWith('/admin')) {
+    // If accessing /admin/login while already authenticated as admin, go to /admin/dashboard
+    if (pathname === '/admin/login') {
+      if (isAdmin) {
+        return NextResponse.redirect(new URL('/admin/dashboard', request.url));
+      }
+      return NextResponse.next();
     }
+
+    // All other /admin routes require admin authentication
+    if (!isAdmin) {
+      const loginUrl = new URL('/admin/login', request.url);
+      loginUrl.searchParams.set('redirect', pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+
+    // Allow authenticated admin
     return NextResponse.next();
   }
 
-  // 2. STRICT NON-ADMIN PROTECTION FOR ADMIN ROUTES:
-  // If a non-admin (customer or guest) attempts to access /admin routes (except /admin/login)
-  if (pathname.startsWith('/admin') && pathname !== '/admin/login') {
-    const loginUrl = new URL('/admin/login', request.url);
-    loginUrl.searchParams.set('redirect', pathname);
-    return NextResponse.redirect(loginUrl);
-  }
-
-  // 3. PROTECT /api/admin API ENDPOINTS
+  // 2. PROTECT /api/admin API ENDPOINTS
   if (pathname.startsWith('/api/admin') && pathname !== '/api/admin/login') {
-    return NextResponse.json(
-      { success: false, message: 'Access Denied: Admin privileges required.' },
-      { status: 403 }
-    );
+    if (!isAdmin) {
+      return NextResponse.json(
+        { success: false, message: 'Access Denied: Admin privileges required.' },
+        { status: 403 }
+      );
+    }
   }
 
+  // 3. STOREFRONT & PUBLIC PAGES:
+  // Allow all users (guests, customers, and admins) to freely browse the storefront!
   return NextResponse.next();
 }
 
