@@ -38,6 +38,16 @@ export const seoEntries: Record<string, SeoEntry> = {
     description: 'Read the latest insights on herbal healing, Butterfly Pea benefits, mindful tea rituals, and daily Ayurvedic wellness recipes.',
     keywords: ['herbal tea recipes', 'blue tea benefits', 'ayurvedic tea rituals', 'wellness blog', 'herbal healing articles'],
   },
+  '/blog/how-to-choose-quality-butterfly-pea-flower-tea-online': {
+    title: 'Buy Butterfly Pea Flower Tea Online | Bracha Blue Tea',
+    description: 'Buy Butterfly Pea Flower Tea Online from Bracha by Prime Brew Herbis. Explore blue tea with elaichi, brewing tips, flavour details and easy ordering.',
+    keywords: ['buy butterfly pea flower tea online', 'bracha blue tea', 'blue tea with elaichi', 'butterfly pea tea online', 'prime brew herbis'],
+  },
+  '/blogs/how-to-choose-quality-butterfly-pea-flower-tea-online': {
+    title: 'Buy Butterfly Pea Flower Tea Online | Bracha Blue Tea',
+    description: 'Buy Butterfly Pea Flower Tea Online from Bracha by Prime Brew Herbis. Explore blue tea with elaichi, brewing tips, flavour details and easy ordering.',
+    keywords: ['buy butterfly pea flower tea online', 'bracha blue tea', 'blue tea with elaichi', 'butterfly pea tea online', 'prime brew herbis'],
+  },
 };
 
 export function createPageMetadata(path: string, entry?: SeoEntry, image = '/images/logo_opaque.png'): Metadata {

@@ -282,7 +282,7 @@ export default function HomePage({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {initialBlogs.map((blog) => (
+            {initialBlogs.slice(0, 3).map((blog) => (
               <Link
                 key={blog._id}
                 href={`/blogs/${blog.slug}`}

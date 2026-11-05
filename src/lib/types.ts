@@ -81,8 +81,13 @@ export interface Blog {
   readTime: string;
   publishDate: string;
   coverImage: string;
+  coverImageAlt?: string;
   tags: string[];
   featured?: boolean;
+  seoTitle?: string;
+  seoDescription?: string;
+  url?: string;
+  canonicalUrl?: string;
 }
 
 export interface CartItem {

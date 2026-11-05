@@ -28,6 +28,8 @@ export function BlogsClientContent({ initialBlogs }: BlogsClientContentProps) {
 
   const featuredBlog = initialBlogs.find((b) => b.featured) || initialBlogs[0];
 
+  const getBlogUrl = (blog: Blog) => blog.url || `/blogs/${blog.slug}`;
+
   return (
     <div className="py-16 bg-brand-cream min-h-screen">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
@@ -108,7 +110,7 @@ export function BlogsClientContent({ initialBlogs }: BlogsClientContentProps) {
                   </span>
                 </div>
                 <h2 className="font-heading font-extrabold text-2xl sm:text-3xl text-brand-darkGreen hover:text-brand-green transition-colors leading-tight">
-                  <Link href={`/blogs/${featuredBlog.slug}`}>{featuredBlog.title}</Link>
+                  <Link href={getBlogUrl(featuredBlog)}>{featuredBlog.title}</Link>
                 </h2>
                 <p className="text-gray-600 text-sm leading-relaxed">{featuredBlog.excerpt}</p>
               </div>
@@ -125,7 +127,7 @@ export function BlogsClientContent({ initialBlogs }: BlogsClientContentProps) {
                   ))}
                 </div>
                 <Link
-                  href={`/blogs/${featuredBlog.slug}`}
+                  href={getBlogUrl(featuredBlog)}
                   className="font-bold text-xs text-brand-green hover:text-brand-darkGreen flex items-center gap-1.5 transition-colors group"
                 >
                   <span>Read Article</span>
@@ -174,7 +176,7 @@ export function BlogsClientContent({ initialBlogs }: BlogsClientContentProps) {
                       <span>{blog.publishDate}</span>
                     </div>
                     <h3 className="font-heading font-bold text-base text-brand-darkGreen group-hover:text-brand-green transition-colors line-clamp-2">
-                      <Link href={`/blogs/${blog.slug}`}>{blog.title}</Link>
+                      <Link href={getBlogUrl(blog)}>{blog.title}</Link>
                     </h3>
                     <p className="text-gray-600 text-xs line-clamp-3 leading-relaxed">{blog.excerpt}</p>
                   </div>
@@ -188,10 +190,10 @@ export function BlogsClientContent({ initialBlogs }: BlogsClientContentProps) {
                       ))}
                     </div>
                     <Link
-                      href={`/blogs/${blog.slug}`}
+                      href={getBlogUrl(blog)}
                       className="text-xs font-bold text-brand-green flex items-center gap-1 group-hover:text-brand-darkGreen"
                     >
-                      <span>Read</span>
+                      <span>Read More</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </Link>
                   </div>

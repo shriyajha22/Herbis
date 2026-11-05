@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { initialBlogs } from '@/lib/seedData';
-import { Clock, Tag, ArrowLeft } from 'lucide-react';
+import { Clock, Tag, ArrowLeft, Calendar } from 'lucide-react';
 
 interface BlogDetailPageProps {
   params: Promise<{ slug: string }>;
@@ -19,15 +19,35 @@ export async function generateMetadata({ params }: BlogDetailPageProps): Promise
   const blog = initialBlogs.find((b) => b.slug === slug || b._id === slug);
   if (!blog) notFound();
 
+  // Use custom SEO metadata if available, otherwise fall back to default
+  const seoTitle = blog.seoTitle || `${blog.title} | PrimeBrew Herbis Journal`;
+  const seoDescription = blog.seoDescription || blog.excerpt;
+  const canonicalPath = blog.canonicalUrl || `/blog/${blog.slug}`;
+
   return {
-    title: `${blog.title} | PrimeBrew Herbis Journal`,
-    description: blog.excerpt,
+    title: { absolute: seoTitle },
+    description: seoDescription,
+    alternates: { canonical: canonicalPath },
     openGraph: {
       title: blog.title,
-      description: blog.excerpt,
+      description: seoDescription,
+      images: [{ url: blog.coverImage, alt: blog.coverImageAlt || blog.title }],
+      type: 'article',
+      siteName: 'PrimeBrew Herbis',
+      url: canonicalPath,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: blog.title,
+      description: seoDescription,
       images: [blog.coverImage],
     },
   };
+}
+
+/** Detect whether content is HTML (starts with a tag) */
+function isHtmlContent(content: string): boolean {
+  return content.trimStart().startsWith('<');
 }
 
 export default async function BlogDetailPage({ params }: BlogDetailPageProps) {
@@ -37,6 +57,8 @@ export default async function BlogDetailPage({ params }: BlogDetailPageProps) {
   if (!blog) {
     notFound();
   }
+
+  const htmlContent = isHtmlContent(blog.content);
 
   return (
     <div className="py-16 bg-brand-cream min-h-screen">
@@ -48,7 +70,7 @@ export default async function BlogDetailPage({ params }: BlogDetailPageProps) {
           <ArrowLeft className="w-4 h-4" /> Back to Journal & Recipes
         </Link>
 
-        <div className="bg-white rounded-card border border-brand-mint/30 shadow-card p-6 sm:p-10 space-y-6">
+        <article className="bg-white rounded-card border border-brand-mint/30 shadow-card p-6 sm:p-10 space-y-6">
           <div className="space-y-3">
             <span className="text-xs font-bold uppercase tracking-widest text-brand-green bg-brand-mint/30 px-3 py-1 rounded-badge">
               {blog.category}
@@ -57,16 +79,24 @@ export default async function BlogDetailPage({ params }: BlogDetailPageProps) {
               {blog.title}
             </h1>
 
-            <div className="flex items-center gap-2 text-xs text-gray-500 pt-2 border-t border-gray-100 font-medium">
-              <Clock className="w-3.5 h-3.5 text-brand-green" />
-              <span>{blog.readTime}</span>
+            <div className="flex items-center gap-4 text-xs text-gray-500 pt-2 border-t border-gray-100 font-medium">
+              <span className="flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-brand-green" />
+                {blog.readTime}
+              </span>
+              {blog.publishDate && (
+                <span className="flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-brand-green" />
+                  {blog.publishDate}
+                </span>
+              )}
             </div>
           </div>
 
           <div className="relative aspect-video rounded-image overflow-hidden bg-brand-beige">
             <Image
               src={blog.coverImage}
-              alt={blog.title}
+              alt={blog.coverImageAlt || blog.title}
               fill
               priority
               className="object-cover"
@@ -77,7 +107,14 @@ export default async function BlogDetailPage({ params }: BlogDetailPageProps) {
             <p className="font-semibold text-brand-darkGreen text-base leading-relaxed">
               {blog.excerpt}
             </p>
-            <div className="whitespace-pre-line font-light text-gray-600">{blog.content}</div>
+            {htmlContent ? (
+              <div
+                className="blog-html-content font-light text-gray-600"
+                dangerouslySetInnerHTML={{ __html: blog.content }}
+              />
+            ) : (
+              <div className="whitespace-pre-line font-light text-gray-600">{blog.content}</div>
+            )}
           </div>
 
           <div className="pt-6 border-t border-gray-100 flex items-center justify-between">
@@ -92,7 +129,7 @@ export default async function BlogDetailPage({ params }: BlogDetailPageProps) {
               Shop Featured Herbal Teas
             </Link>
           </div>
-        </div>
+        </article>
       </div>
     </div>
   );
